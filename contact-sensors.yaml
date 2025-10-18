@@ -10,7 +10,7 @@ blueprint:
     • Announces OPENED/CLOSED using your device’s Area name for natural phrases.
     • Optional reminder: repeats a message every X seconds while the sensor stays OPEN.
     • Optional action: turn on selected lights/switches when the sensor opens.
-    • TTS has a small pre-roll to avoid clipping the first word.
+    • TTS has a small pre-roll to avoid clipping the start of the message.
     • All speech is queued (mode: queued, max: 2) to avoid overlapping audio.
 
     Setup
@@ -190,36 +190,30 @@ action:
           {{ r }} door
         {% endif %}
 
-      # TTS plumbing
+      # TTS plumbing / toggles
       players: !input media_players
       tts_engine_ent: !input tts_engine
       tts_voice_name: !input tts_voice
       tts_preroll_ms: !input tts_preroll_ms
 
-      # Independent toggles
       announce_openclose: !input announce_openclose
       open_reminder_enabled: !input open_reminder_enabled
-
-      # Reminder interval
       reminder_interval: !input reminder_interval
-
-      # Optional actions
       open_turn_on_entities: !input open_turn_on_entities
 
       # Can we speak at all? (independent of which feature is toggled)
       has_tts: >-
         {{ (players | length > 0)
            and (tts_engine_ent is string and tts_engine_ent|length > 0) }}
-      has_voice: "{{ (tts_voice_name | default('') | trim) != '' }}"
 
       # Feature-specific gates
       can_tts_openclose: "{{ has_tts and announce_openclose }}"
       can_tts_reminder: "{{ has_tts and open_reminder_enabled }}"
 
-      # Messages
-      final_opened: "{{ subject_sensor ~ ' was opened.' }}"
-      final_closed: "{{ subject_sensor ~ ' was closed.' }}"
-      final_open_reminder: "{{ subject_sensor ~ ' is still open.' }}"
+      # Messages (always non-empty strings)
+      final_opened: "{{ (subject_sensor ~ ' was opened.') }}"
+      final_closed: "{{ (subject_sensor ~ ' was closed.') }}"
+      final_open_reminder: "{{ (subject_sensor ~ ' is still open.') }}"
 
   - choose:
 
@@ -247,28 +241,15 @@ action:
                 sequence:
                   - delay:
                       milliseconds: "{{ tts_preroll_ms | int }}"
-                  - choose:
-                      - conditions:
-                          - condition: template
-                            value_template: "{{ has_voice }}"
-                        sequence:
-                          - service: tts.speak
-                            target:
-                              entity_id: !input tts_engine
-                            data:
-                              message: "{{ (final_opened | default('')) }}"
-                              cache: !input tts_cache
-                              media_player_entity_id: !input media_players
-                              options:
-                                voice: !input tts_voice
-                    default:
-                      - service: tts.speak
-                        target:
-                          entity_id: !input tts_engine
-                        data:
-                          message: "{{ (final_opened | default('')) }}"
-                          cache: !input tts_cache
-                          media_player_entity_id: !input media_players
+                  - service: tts.speak
+                    target:
+                      entity_id: !input tts_engine
+                    data:
+                      message: "{{ final_opened }}"
+                      cache: !input tts_cache
+                      media_player_entity_id: !input media_players
+                      options:
+                        voice: "{{ tts_voice_name | default('') }}"
             default: []
 
           # Repeat reminder while OPEN (independent toggle)
@@ -294,28 +275,15 @@ action:
                           value_template: "{{ states(sensor_ent) == 'on' }}"
                         - delay:
                             milliseconds: "{{ tts_preroll_ms | int }}"
-                        - choose:
-                            - conditions:
-                                - condition: template
-                                  value_template: "{{ has_voice }}"
-                              sequence:
-                                - service: tts.speak
-                                  target:
-                                    entity_id: !input tts_engine
-                                  data:
-                                    message: "{{ (final_open_reminder | default('')) }}"
-                                    cache: !input tts_cache
-                                    media_player_entity_id: !input media_players
-                                    options:
-                                      voice: !input tts_voice
-                          default:
-                            - service: tts.speak
-                              target:
-                                entity_id: !input tts_engine
-                              data:
-                                message: "{{ (final_open_reminder | default('')) }}"
-                                cache: !input tts_cache
-                                media_player_entity_id: !input media_players
+                        - service: tts.speak
+                          target:
+                            entity_id: !input tts_engine
+                          data:
+                            message: "{{ final_open_reminder }}"
+                            cache: !input tts_cache
+                            media_player_entity_id: !input media_players
+                            options:
+                              voice: "{{ tts_voice_name | default('') }}"
             default: []
 
       # ---------- SENSOR CLOSED ----------
@@ -329,4 +297,14 @@ action:
                     value_template: "{{ can_tts_openclose }}"
                 sequence:
                   - delay:
-                      milliseconds: "{{ tts
+                      milliseconds: "{{ tts_preroll_ms | int }}"
+                  - service: tts.speak
+                    target:
+                      entity_id: !input tts_engine
+                    data:
+                      message: "{{ final_closed }}"
+                      cache: !input tts_cache
+                      media_player_entity_id: !input media_players
+                      options:
+                        voice: "{{ tts_voice_name | default('') }}"
+            default: []
