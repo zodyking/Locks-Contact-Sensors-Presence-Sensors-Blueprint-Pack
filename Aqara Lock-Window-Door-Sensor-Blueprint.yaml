@@ -138,17 +138,17 @@ max: 50
 
 trigger:
   - id: sensor_opened
-    platform: "state"
+    platform: state
     entity_id: !input door_sensor
     to: "on"
 
   - id: sensor_closed
-    platform: "state"
+    platform: state
     entity_id: !input door_sensor
     to: "off"
 
   - id: lock_changed
-    platform: "state"
+    platform: state
     entity_id: !input lock_entity
 
 condition: []
@@ -159,21 +159,34 @@ action:
       lock_ent: !input lock_entity
       sensor_name: "{{ state_attr(sensor_ent, 'friendly_name') or sensor_ent }}"
       lock_name: "{{ state_attr(lock_ent, 'friendly_name') or lock_ent }}"
-      announce_enabled: !input announce_enabled
-      announce_sensor: !input announce_sensor
-      announce_lock: !input announce_lock
+
+      # TTS helpers
       players: !input media_players
       tts_engine_ent: !input tts_engine
       tts_voice_name: !input tts_voice
-      custom_open_msg: !input custom_open_msg
-      custom_closed_msg: !input custom_closed_msg
-      custom_locked_msg: !input custom_locked_msg
-      custom_unlocked_msg: !input custom_unlocked_msg
+      tts_cache_val: !input tts_cache
+      announce_enabled: !input announce_enabled
+      announce_sensor: !input announce_sensor
+      announce_lock: !input announce_lock
+      has_tts: >-
+        {{ announce_enabled and (players | length > 0)
+           and (tts_engine_ent is string and tts_engine_ent|length > 0) }}
+      do_tts_sensor: "{{ has_tts and announce_sensor }}"
+      do_tts_lock: "{{ has_tts and announce_lock }}"
+      has_voice: "{{ (tts_voice_name | default('') | trim) != '' }}"
       stability: !input closed_stability
+
+      # Prebuilt messages
+      msg_open: >-
+        {% set base = (custom_open_msg | default('') | trim) %}
+        {{ base.replace('{door}', sensor_name) if base else sensor_name ~ ' opened.' }}
+      msg_closed: >-
+        {% set base = (custom_closed_msg | default('') | trim) %}
+        {{ base.replace('{door}', sensor_name) if base else sensor_name ~ ' closed.' }}
 
   - choose:
 
-      # ---------- SENSOR OPENED: speak immediately ----------
+      # ---------- SENSOR OPENED ----------
       - conditions:
           - condition: trigger
             id: sensor_opened
@@ -181,74 +194,70 @@ action:
           - choose:
               - conditions:
                   - condition: template
-                    value_template: >
-                      {{ announce_enabled and announce_sensor and (players | length > 0)
-                         and (tts_engine_ent is string and tts_engine_ent|length > 0) }}
+                    value_template: "{{ do_tts_sensor }}"
                 sequence:
                   - choose:
                       - conditions:
                           - condition: template
-                            value_template: "{{ (tts_voice_name | default('') | trim) != '' }}"
+                            value_template: "{{ has_voice }}"
                         sequence:
                           - service: tts.speak
-                            target: { entity_id: !input tts_engine }
+                            target:
+                              entity_id: !input tts_engine
                             data:
-                              message: >-
-                                {% set base = (custom_open_msg | default('') | trim) %}
-                                {{ base.replace('{door}', sensor_name) if base else sensor_name ~ ' opened.' }}
-                              cache: !input tts_cache
+                              message: "{{ msg_open }}"
+                              cache: "{{ tts_cache_val }}"
                               media_player_entity_id: !input media_players
-                              options: { voice: !input tts_voice }
+                              options:
+                                voice: !input tts_voice
                     default:
                       - service: tts.speak
-                        target: { entity_id: !input tts_engine }
+                        target:
+                          entity_id: !input tts_engine
                         data:
-                          message: >-
-                            {% set base = (custom_open_msg | default('') | trim) %}
-                            {{ base.replace('{door}', sensor_name) if base else sensor_name ~ ' opened.' }}
-                          cache: !input tts_cache
+                          message: "{{ msg_open }}"
+                          cache: "{{ tts_cache_val }}"
                           media_player_entity_id: !input media_players
+            default: []
 
-      # ---------- SENSOR CLOSED: speak immediately, THEN guarded auto-lock ----------
+      # ---------- SENSOR CLOSED (speak first, then guarded lock) ----------
       - conditions:
           - condition: trigger
             id: sensor_closed
         sequence:
-          # Speak CLOSED right away (if enabled)
+          # Speak CLOSED immediately
           - choose:
               - conditions:
                   - condition: template
-                    value_template: >
-                      {{ announce_enabled and announce_sensor and (players | length > 0)
-                         and (tts_engine_ent is string and tts_engine_ent|length > 0) }}
+                    value_template: "{{ do_tts_sensor }}"
                 sequence:
                   - choose:
                       - conditions:
                           - condition: template
-                            value_template: "{{ (tts_voice_name | default('') | trim) != '' }}"
+                            value_template: "{{ has_voice }}"
                         sequence:
                           - service: tts.speak
-                            target: { entity_id: !input tts_engine }
+                            target:
+                              entity_id: !input tts_engine
                             data:
-                              message: >-
-                                {% set base = (custom_closed_msg | default('') | trim) %}
-                                {{ base.replace('{door}', sensor_name) if base else sensor_name ~ ' closed.' }}
-                              cache: !input tts_cache
+                              message: "{{ msg_closed }}"
+                              cache: "{{ tts_cache_val }}"
                               media_player_entity_id: !input media_players
-                              options: { voice: !input tts_voice }
+                              options:
+                                voice: !input tts_voice
                     default:
                       - service: tts.speak
-                        target: { entity_id: !input tts_engine }
+                        target:
+                          entity_id: !input tts_engine
                         data:
-                          message: >-
-                            {% set base = (custom_closed_msg | default('') | trim) %}
-                            {{ base.replace('{door}', sensor_name) if base else sensor_name ~ ' closed.' }}
-                          cache: !input tts_cache
+                          message: "{{ msg_closed }}"
+                          cache: "{{ tts_cache_val }}"
                           media_player_entity_id: !input media_players
+            default: []
 
-          # Guard 1: wait lock_delay unless the sensor OPENS -> cancel
+          # Guard 1: wait lock_delay unless sensor OPENS -> cancel
           - wait_for_trigger:
-              - platform: "state"
+              - platform: state
                 entity_id: !input door_sensor
                 to: "on"
             timeout:
@@ -261,6 +270,7 @@ action:
                     value_template: "{{ wait.completed | default(false) }}"
                 sequence:
                   - stop: "Door reopened during delay; cancel auto-lock."
+            default: []
 
           # Confirm still closed
           - condition: state
@@ -274,11 +284,11 @@ action:
                     value_template: "{{ (stability | int) > 0 }}"
                 sequence:
                   - wait_for_trigger:
-                      - platform: "state"
+                      - platform: state
                         entity_id: !input door_sensor
                         to: "on"
                     timeout:
-                      seconds: "{{ stability | int }}"
+                      seconds: !input closed_stability
                     continue_on_timeout: true
                   - choose:
                       - conditions:
@@ -286,49 +296,53 @@ action:
                             value_template: "{{ wait.completed | default(false) }}"
                         sequence:
                           - stop: "Door reopened during stability; cancel auto-lock."
+                    default: []
+            default: []
 
           # Final re-check and lock
           - condition: state
             entity_id: !input door_sensor
             state: "off"
-
           - condition: template
             value_template: "{{ not is_state(lock_ent, 'locked') }}"
 
           - service: lock.lock
-            target: { entity_id: !input lock_entity }
+            target:
+              entity_id: !input lock_entity
 
           # Speak lock result (optional)
           - choose:
               - conditions:
                   - condition: template
-                    value_template: >
-                      {{ announce_enabled and announce_lock and (players | length > 0)
-                         and (tts_engine_ent is string and tts_engine_ent|length > 0) }}
+                    value_template: "{{ do_tts_lock }}"
                 sequence:
                   - choose:
                       - conditions:
                           - condition: template
-                            value_template: "{{ (tts_voice_name | default('') | trim) != '' }}"
+                            value_template: "{{ has_voice }}"
                         sequence:
                           - service: tts.speak
-                            target: { entity_id: !input tts_engine }
+                            target:
+                              entity_id: !input tts_engine
                             data:
                               message: >-
                                 {{ (custom_locked_msg | trim) and custom_locked_msg.replace('{lock}', lock_name) or (lock_name ~ ' locked.') }}
-                              cache: !input tts_cache
+                              cache: "{{ tts_cache_val }}"
                               media_player_entity_id: !input media_players
-                              options: { voice: !input tts_voice }
+                              options:
+                                voice: !input tts_voice
                     default:
                       - service: tts.speak
-                        target: { entity_id: !input tts_engine }
+                        target:
+                          entity_id: !input tts_engine
                         data:
                           message: >-
                             {{ (custom_locked_msg | trim) and custom_locked_msg.replace('{lock}', lock_name) or (lock_name ~ ' locked.') }}
-                          cache: !input tts_cache
+                          cache: "{{ tts_cache_val }}"
                           media_player_entity_id: !input media_players
+            default: []
 
-      # ---------- LOCK CHANGED: speak state ----------
+      # ---------- LOCK CHANGED ----------
       - conditions:
           - condition: trigger
             id: lock_changed
@@ -336,17 +350,16 @@ action:
           - choose:
               - conditions:
                   - condition: template
-                    value_template: >
-                      {{ announce_enabled and announce_lock and (players | length > 0)
-                         and (tts_engine_ent is string and tts_engine_ent|length > 0) }}
+                    value_template: "{{ do_tts_lock }}"
                 sequence:
                   - choose:
                       - conditions:
                           - condition: template
-                            value_template: "{{ (tts_voice_name | default('') | trim) != '' }}"
+                            value_template: "{{ has_voice }}"
                         sequence:
                           - service: tts.speak
-                            target: { entity_id: !input tts_engine }
+                            target:
+                              entity_id: !input tts_engine
                             data:
                               message: >-
                                 {% set s = trigger.to_state.state %}
@@ -359,12 +372,14 @@ action:
                                 {% elif s in ['locking','unlocking','jammed'] %}
                                   {{ lock_name }} is {{ s }}.
                                 {% else %}{% endif %}
-                              cache: !input tts_cache
+                              cache: "{{ tts_cache_val }}"
                               media_player_entity_id: !input media_players
-                              options: { voice: !input tts_voice }
+                              options:
+                                voice: !input tts_voice
                     default:
                       - service: tts.speak
-                        target: { entity_id: !input tts_engine }
+                        target:
+                          entity_id: !input tts_engine
                         data:
                           message: >-
                             {% set s = trigger.to_state.state %}
@@ -377,5 +392,6 @@ action:
                             {% elif s in ['locking','unlocking','jammed'] %}
                               {{ lock_name }} is {{ s }}.
                             {% else %}{% endif %}
-                          cache: !input tts_cache
+                          cache: "{{ tts_cache_val }}"
                           media_player_entity_id: !input media_players
+            default: []
