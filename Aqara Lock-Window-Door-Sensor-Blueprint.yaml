@@ -160,7 +160,7 @@ blueprint:
 mode: queued
 max: 50
 
-# One global event trigger so either (or both) features can be used.
+# Single event trigger; we filter inside actions so missing inputs are OK.
 trigger:
   - platform: event
     event_type: state_changed
@@ -169,20 +169,21 @@ condition: []
 
 action:
   - variables:
-      sensor_ent: !input door_sensor
-      lock_ent: !input lock_entity
+      # inputs as raw values
+      sensor_input: !input door_sensor
+      lock_input: !input lock_entity
 
-      # Are inputs set?
-      sensor_set: "{{ sensor_ent is string and (sensor_ent|length) > 0 }}"
-      lock_set: "{{ lock_ent is string and (lock_ent|length) > 0 }}"
+      # Flags for whether inputs are provided (non-empty strings)
+      sensor_set: "{{ sensor_input is string and (sensor_input|length) > 0 }}"
+      lock_set: "{{ lock_input is string and (lock_input|length) > 0 }}"
 
-      # Names (resolved at runtime)
-      sensor_name: "{{ state_attr(sensor_ent, 'friendly_name') or sensor_ent }}"
-      lock_name: "{{ state_attr(lock_ent, 'friendly_name') or lock_ent }}"
+      # Friendly names
+      sensor_name: "{{ state_attr(sensor_input, 'friendly_name') or sensor_input }}"
+      lock_name: "{{ state_attr(lock_input, 'friendly_name') or lock_input }}"
 
       # TTS plumbing
       players: !input media_players
-      tts_engine_ent: !input tts_engine
+      tts_engine_input: !input tts_engine
       tts_voice_name: !input tts_voice
       tts_cache_val: !input tts_cache
       has_voice: "{{ (tts_voice_name | default('') | trim) != '' }}"
@@ -191,7 +192,7 @@ action:
       announce_lock: !input announce_lock
       has_tts: >-
         {{ announce_enabled and (players | length > 0)
-           and (tts_engine_ent is string and tts_engine_ent|length > 0) }}
+           and (tts_engine_input is string and tts_engine_input|length > 0) }}
       do_tts_sensor: "{{ has_tts and announce_sensor and sensor_set }}"
       do_tts_lock: "{{ has_tts and announce_lock and lock_set }}"
 
@@ -230,7 +231,7 @@ action:
             value_template: >-
               {{ sensor_set
                  and trigger.event and trigger.event.data
-                 and trigger.event.data.entity_id == sensor_ent }}
+                 and trigger.event.data.entity_id == sensor_input }}
         sequence:
 
           # Speak OPENED immediately
@@ -266,7 +267,7 @@ action:
                           media_player_entity_id: !input media_players
             default: []
 
-          # Speak CLOSED immediately, then guarded auto-lock flow (only if a lock is set)
+          # Speak CLOSED immediately, then guarded auto-lock (only if a lock is set)
           - choose:
               - conditions:
                   - condition: template
@@ -274,7 +275,7 @@ action:
                       {{ trigger.event.data.new_state
                          and trigger.event.data.new_state.state == 'off' }}
                 sequence:
-                  # TTS for CLOSED (if enabled)
+                  # CLOSED TTS
                   - choose:
                       - conditions:
                           - condition: template
@@ -311,7 +312,7 @@ action:
                             value_template: "{{ lock_set }}"
                         sequence:
 
-                          # Guard 1: wait `lock_delay` unless sensor OPENS → cancel
+                          # Guard 1: wait lock_delay unless sensor OPENS
                           - wait_for_trigger:
                               - platform: state
                                 entity_id: !input door_sensor
@@ -332,7 +333,7 @@ action:
                             entity_id: !input door_sensor
                             state: "off"
 
-                          # Guard 2: optional stability window; cancel if opens
+                          # Guard 2: stability window; cancel if opens
                           - choose:
                               - conditions:
                                   - condition: template
@@ -375,7 +376,7 @@ action:
 
                           # Only lock if not already locked
                           - condition: template
-                            value_template: "{{ not is_state(lock_ent, 'locked') }}"
+                            value_template: "{{ not is_state(lock_input, 'locked') }}"
                           - service: lock.lock
                             target:
                               entity_id: !input lock_entity
@@ -387,7 +388,7 @@ action:
             value_template: >-
               {{ lock_set
                  and trigger.event and trigger.event.data
-                 and trigger.event.data.entity_id == lock_ent
+                 and trigger.event.data.entity_id == lock_input
                  and trigger.event.data.new_state
                  and trigger.event.data.new_state.state in ['locked','unlocked'] }}
         sequence:
