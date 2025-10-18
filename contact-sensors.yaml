@@ -15,8 +15,10 @@ blueprint:
 
     Setup
     1) Select the contact sensor.
-    2) (Optional) Enable announcements, choose a TTS engine (e.g., tts.piper), pick speakers, voice, and preroll.
-    3) (Optional) Enable the “still open” reminder and set the interval.
+    2) (Optional) Choose a TTS engine (e.g., tts.piper) and speakers.
+    3) Independently toggle:
+       • Speak open/close announcements
+       • Repeat reminder while OPEN (and set the interval)
     4) (Optional) Choose lights/switches to turn on when the sensor opens.
 
     Notes
@@ -58,19 +60,40 @@ blueprint:
             - entrance
             - window
 
-    # ---- TTS / Announce options ----
-    announce_enabled:
-      name: Speak announcements
+    # ---- Independent announcement toggles ----
+    announce_openclose:
+      name: Speak open/close announcements
       description: |-
-        Turn on to speak OPENED/CLOSED and reminder messages.
+        If on, we speak the OPENED and CLOSED messages.
       default: false
       selector:
         boolean: {}
 
+    open_reminder_enabled:
+      name: Repeat reminder while OPEN
+      description: |-
+        If on, we repeat a reminder message while the sensor is OPEN until it’s CLOSED.
+      default: false
+      selector:
+        boolean: {}
+
+    reminder_interval:
+      name: Reminder interval (seconds)
+      description: |-
+        How often to repeat reminder messages while the condition stays true.
+      default: 30
+      selector:
+        number:
+          min: 15
+          max: 120
+          unit_of_measurement: seconds
+          mode: slider
+
+    # ---- TTS plumbing ----
     tts_engine:
       name: TTS engine
       description: |-
-        Pick your TTS engine entity (e.g., tts.piper). Required if announcements are enabled.
+        Pick your TTS engine entity (e.g., tts.piper). Required if either announcements or reminders are enabled.
       default: ""
       selector:
         entity:
@@ -79,7 +102,7 @@ blueprint:
     media_players:
       name: Speakers for TTS
       description: |-
-        One or more media_player entities to speak on (used only if announcements are enabled).
+        One or more media_player entities to speak on.
       default: []
       selector:
         entity:
@@ -114,27 +137,6 @@ blueprint:
           max: 300
           step: 10
           unit_of_measurement: ms
-          mode: slider
-
-    # ---- Reminders ----
-    open_reminder_enabled:
-      name: Repeat reminder while OPEN
-      description: |-
-        If on, we repeat a reminder message while the sensor is OPEN until it’s CLOSED.
-      default: false
-      selector:
-        boolean: {}
-
-    reminder_interval:
-      name: Reminder interval (seconds)
-      description: |-
-        How often to repeat reminder messages while the condition stays true.
-      default: 30
-      selector:
-        number:
-          min: 15
-          max: 120
-          unit_of_measurement: seconds
           mode: slider
 
     # ---- Optional action on OPEN ----
@@ -192,19 +194,27 @@ action:
       players: !input media_players
       tts_engine_ent: !input tts_engine
       tts_voice_name: !input tts_voice
-      announce_enabled: !input announce_enabled
       tts_preroll_ms: !input tts_preroll_ms
 
-      # Reminders
+      # Independent toggles
+      announce_openclose: !input announce_openclose
       open_reminder_enabled: !input open_reminder_enabled
+
+      # Reminder interval
       reminder_interval: !input reminder_interval
+
+      # Optional actions
       open_turn_on_entities: !input open_turn_on_entities
 
-      # Can we speak?
+      # Can we speak at all? (independent of which feature is toggled)
       has_tts: >-
-        {{ announce_enabled and (players | length > 0)
+        {{ (players | length > 0)
            and (tts_engine_ent is string and tts_engine_ent|length > 0) }}
       has_voice: "{{ (tts_voice_name | default('') | trim) != '' }}"
+
+      # Feature-specific gates
+      can_tts_openclose: "{{ has_tts and announce_openclose }}"
+      can_tts_reminder: "{{ has_tts and open_reminder_enabled }}"
 
       # Messages
       final_opened: "{{ subject_sensor ~ ' was opened.' }}"
@@ -229,11 +239,11 @@ action:
                       entity_id: !input open_turn_on_entities
             default: []
 
-          # Speak OPENED
+          # Speak OPENED (independent toggle)
           - choose:
               - conditions:
                   - condition: template
-                    value_template: "{{ has_tts }}"
+                    value_template: "{{ can_tts_openclose }}"
                 sequence:
                   - delay:
                       milliseconds: "{{ tts_preroll_ms | int }}"
@@ -246,100 +256,3 @@ action:
                             target:
                               entity_id: !input tts_engine
                             data:
-                              message: "{{ final_opened }}"
-                              cache: !input tts_cache
-                              media_player_entity_id: !input media_players
-                              options:
-                                voice: !input tts_voice
-                    default:
-                      - service: tts.speak
-                        target:
-                          entity_id: !input tts_engine
-                        data:
-                          message: "{{ final_opened }}"
-                          cache: !input tts_cache
-                          media_player_entity_id: !input media_players
-            default: []
-
-          # Repeat reminder while OPEN (interruptible immediately on close)
-          - choose:
-              - conditions:
-                  - condition: template
-                    value_template: "{{ has_tts and open_reminder_enabled }}"
-                sequence:
-                  - repeat:
-                      while:
-                        - condition: template
-                          value_template: "{{ states(sensor_ent) == 'on' }}"
-                      sequence:
-                        # Wait for close OR timeout → speak if still open
-                        - wait_for_trigger:
-                            - platform: state
-                              entity_id: !input door_sensor
-                              to: "off"
-                          timeout:
-                            seconds: !input reminder_interval
-                          continue_on_timeout: true
-                        - condition: template
-                          value_template: "{{ states(sensor_ent) == 'on' }}"
-                        - delay:
-                            milliseconds: "{{ tts_preroll_ms | int }}"
-                        - choose:
-                            - conditions:
-                                - condition: template
-                                  value_template: "{{ has_voice }}"
-                              sequence:
-                                - service: tts.speak
-                                  target:
-                                    entity_id: !input tts_engine
-                                  data:
-                                    message: "{{ final_open_reminder }}"
-                                    cache: !input tts_cache
-                                    media_player_entity_id: !input media_players
-                                    options:
-                                      voice: !input tts_voice
-                          default:
-                            - service: tts.speak
-                              target:
-                                entity_id: !input tts_engine
-                              data:
-                                message: "{{ final_open_reminder }}"
-                                cache: !input tts_cache
-                                media_player_entity_id: !input media_players
-            default: []
-
-      # ---------- SENSOR CLOSED ----------
-      - conditions:
-          - condition: trigger
-            id: sensor_closed
-        sequence:
-          - choose:
-              - conditions:
-                  - condition: template
-                    value_template: "{{ has_tts }}"
-                sequence:
-                  - delay:
-                      milliseconds: "{{ tts_preroll_ms | int }}"
-                  - choose:
-                      - conditions:
-                          - condition: template
-                            value_template: "{{ has_voice }}"
-                        sequence:
-                          - service: tts.speak
-                            target:
-                              entity_id: !input tts_engine
-                            data:
-                              message: "{{ final_closed }}"
-                              cache: !input tts_cache
-                              media_player_entity_id: !input media_players
-                              options:
-                                voice: !input tts_voice
-                    default:
-                      - service: tts.speak
-                        target:
-                          entity_id: !input tts_engine
-                        data:
-                          message: "{{ final_closed }}"
-                          cache: !input tts_cache
-                          media_player_entity_id: !input media_players
-            default: []
