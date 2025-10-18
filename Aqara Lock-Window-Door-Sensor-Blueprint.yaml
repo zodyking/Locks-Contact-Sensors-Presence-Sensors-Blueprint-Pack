@@ -6,6 +6,18 @@ blueprint:
     Auto-lock a smart lock X seconds after the contact sensor reports CLOSED (re-checks before locking).
     Optional TTS announcements for all state changes of the contact sensor (door/window) and the lock.
     Messages queue (no overlap) because this automation runs in mode: queued.
+
+    🔊 Default TTS phrasing is based on **Area (room)** + **Door type**:
+      • If **Bedroom** → “<room> door was <action>”
+      • If **Hallway** → “<room> door was <action>”
+      • If **Closet**   → “<room> closet door was <action>”
+      • If **Entrance** → “<room> entrance door was <action>”
+      • If **Window**   → “<room> window was <action>”
+
+    - “<room>” comes from the entity’s **Area**. Assign your sensor/lock to the correct Area in Home Assistant for best results.
+    - The same wording is used for both sensor events (opened/closed) and lock events (locked/unlocked).
+    - Custom messages still work and can use `{room}` to insert the resolved room/area name.
+
   domain: automation
 
   input:
@@ -30,6 +42,27 @@ blueprint:
       selector:
         entity:
           domain: lock
+
+    door_type:
+      name: Door type (affects default TTS wording)
+      description: |-
+        Controls how the default TTS refers to the opening:
+          • Bedroom  → “<room> door was <action>”
+          • Hallway  → “<room> door was <action>”
+          • Closet   → “<room> closet door was <action>”
+          • Entrance → “<room> entrance door was <action>”
+          • Window   → “<room> window was <action>”
+        (Custom messages override these defaults and can use {room}.)
+      default: bedroom
+      selector:
+        select:
+          mode: dropdown
+          options:
+            - bedroom
+            - hallway
+            - closet
+            - entrance
+            - window
 
     lock_delay:
       name: Auto-lock delay (seconds)
@@ -193,6 +226,31 @@ action:
       room_for_sensor: "{{ sensor_area or lock_area or 'Door' }}"
       room_for_lock:   "{{ lock_area or sensor_area or 'Door' }}"
 
+      # Door type (controls nouning for defaults)
+      door_type_in: !input door_type
+
+      # Build the spoken subject for sensor/lock messages based on door_type
+      subject_sensor: >-
+        {% set r = room_for_sensor %}
+        {% set t = (door_type_in or 'bedroom') %}
+        {% if t == 'window' %}
+          {{ r }} window
+        {% elif t in ['closet','entrance'] %}
+          {{ r }} {{ t }} door
+        {% else %}
+          {{ r }} door
+        {% endif %}
+      subject_lock: >-
+        {% set r = room_for_lock %}
+        {% set t = (door_type_in or 'bedroom') %}
+        {% if t == 'window' %}
+          {{ r }} window
+        {% elif t in ['closet','entrance'] %}
+          {{ r }} {{ t }} door
+        {% else %}
+          {{ r }} door
+        {% endif %}
+
       # Inputs (bound so templates can read them)
       players: !input media_players
       tts_engine_ent: !input tts_engine
@@ -217,23 +275,23 @@ action:
       do_tts_lock: "{{ has_tts and announce_lock }}"
       has_voice: "{{ (tts_voice_name | default('') | trim) != '' }}"
 
-      # Final message strings (standardized)
-      final_opened: >-
+      # Final message strings (standardized, type-aware)
+      final_opened: |-
         {% set base = (custom_open_msg_in | default('', true) | trim) %}
         {% if base %}{{ base.replace('{room}', room_for_sensor) }}
-        {% else %}{{ room_for_sensor ~ ' door was opened.' }}{% endif %}
-      final_closed: >-
+        {% else %}{{ subject_sensor ~ ' was opened.' }}{% endif %}
+      final_closed: |-
         {% set base = (custom_closed_msg_in | default('', true) | trim) %}
         {% if base %}{{ base.replace('{room}', room_for_sensor) }}
-        {% else %}{{ room_for_sensor ~ ' door was closed.' }}{% endif %}
-      final_locked: >-
+        {% else %}{{ subject_sensor ~ ' was closed.' }}{% endif %}
+      final_locked: |-
         {% set base = (custom_locked_msg_in | default('', true) | trim) %}
         {% if base %}{{ base.replace('{room}', room_for_lock) }}
-        {% else %}{{ room_for_lock ~ ' door was locked.' }}{% endif %}
-      final_unlocked: >-
+        {% else %}{{ subject_lock ~ ' was locked.' }}{% endif %}
+      final_unlocked: |-
         {% set base = (custom_unlocked_msg_in | default('', true) | trim) %}
         {% if base %}{{ base.replace('{room}', room_for_lock) }}
-        {% else %}{{ room_for_lock ~ ' door was unlocked.' }}{% endif %}
+        {% else %}{{ subject_lock ~ ' was unlocked.' }}{% endif %}
 
   - choose:
 
@@ -385,9 +443,8 @@ action:
                   # Confirm the state really stuck before speaking (avoid false positives)
                   - delay:
                       milliseconds: 150
-                  - condition: state
-                    entity_id: !input lock_entity
-                    state: "{{ trigger.to_state.state }}"
+                  - condition: template
+                    value_template: "{{ is_state(lock_ent, trigger.to_state.state) }}"
                   - delay:
                       milliseconds: "{{ tts_preroll_ms | int }}"
                   - choose:
@@ -395,28 +452,3 @@ action:
                           - condition: template
                             value_template: "{{ has_voice }}"
                         sequence:
-                          - service: tts.speak
-                            target: { entity_id: !input tts_engine }
-                            data:
-                              message: >-
-                                {% if trigger.to_state.state == 'locked' %}
-                                  {{ final_locked }}
-                                {% else %}
-                                  {{ final_unlocked }}
-                                {% endif %}
-                              cache: !input tts_cache
-                              media_player_entity_id: !input media_players
-                              options: { voice: !input tts_voice }
-                    default:
-                      - service: tts.speak
-                        target: { entity_id: !input tts_engine }
-                        data:
-                          message: >-
-                            {% if trigger.to_state.state == 'locked' %}
-                              {{ final_locked }}
-                            {% else %}
-                              {{ final_unlocked }}
-                            {% endif %}
-                          cache: !input tts_cache
-                          media_player_entity_id: !input media_players
-            default: []
