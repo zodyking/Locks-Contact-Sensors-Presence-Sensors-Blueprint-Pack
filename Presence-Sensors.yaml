@@ -44,7 +44,6 @@ blueprint:
             - occupancy
             - motion
 
-    # ---- Action entities (optional) ----
     on_entities:
       name: Turn ON when presence is detected (optional)
       description: |-
@@ -97,7 +96,6 @@ blueprint:
           unit_of_measurement: seconds
           mode: slider
 
-    # ---- TTS / announcements ----
     announce_presence:
       name: Speak presence announcements
       description: |-
@@ -137,7 +135,7 @@ blueprint:
     tts_voice:
       name: Voice name (optional; used only by engines that support it)
       description: |-
-        If supported by your TTS provider (e.g., Piper, Edge TTS, Polly). Leave blank to use that engine’s default.
+        If supported by your TTS provider (e.g., Piper, Edge TTS, Polly). Leave blank to use the engine default.
       default: ""
       selector:
         text: {}
@@ -156,7 +154,6 @@ blueprint:
           unit_of_measurement: ms
           mode: slider
 
-    # ---- Notifications (optional) ----
     notify_enabled:
       name: Send mobile notifications
       description: |-
@@ -195,19 +192,15 @@ action:
   - variables:
       pres_ent: !input presence_sensor
 
-      # Area → room label (no friendly names for TTS)
       room_for_presence: "{{ area_name(pres_ent) or 'Room' }}"
       subject_presence: "{{ room_for_presence }}"
 
-      # Action entities
       on_entities: !input on_entities
       off_entities: !input off_entities
 
-      # Hold times
       on_hold: !input on_hold_secs
       off_hold: !input off_hold_secs
 
-      # TTS plumbing
       announce_presence: !input announce_presence
       tts_engine_ent: !input tts_engine
       players: !input media_players
@@ -215,35 +208,31 @@ action:
       tts_voice_name: !input tts_voice
       tts_preroll_ms: !input tts_preroll_ms
 
-      # Notifications
       notify_enabled: !input notify_enabled
       notify_devices: !input notify_devices
 
-      # Gates
       has_tts: >-
         {{ announce_presence and (players | length > 0)
            and (tts_engine_ent is string and tts_engine_ent|length > 0) }}
       can_notify: >-
         {{ notify_enabled and (notify_devices | length) > 0 }}
 
-      # Engines that accept "options.voice" in tts.speak:
+      # Engines that accept options.voice in tts.speak (broad, safe list)
       tts_supports_voice: >-
-        {{ (tts_engine_ent | string) | regex_search('tts\\.(piper|edge_tts|coqui|microsoft|amazon_polly|polly|elevenlabs|openai)', ignorecase=True) }}
+        {{ (tts_engine_ent | string) | regex_search('tts\\.(piper|edge_tts|microsoft|amazon_polly|polly|coqui|elevenlabs)', True) }}
       tts_voice_set: "{{ (tts_voice_name | default('') | trim) != '' }}"
       use_voice_option: "{{ tts_supports_voice and tts_voice_set }}"
 
-      # Messages
       msg_detected: "{{ 'Presence detected in ' ~ subject_presence ~ '.' }}"
       msg_cleared: "{{ subject_presence ~ ' cleared.' }}"
 
   - choose:
-
-      # ===== PRESENCE DETECTED =====
+      # -------- DETECTED --------
       - conditions:
           - condition: trigger
             id: presence_on
         sequence:
-          # Hold (only if > 0). Faster path when 0.
+          # Hold if > 0
           - choose:
               - conditions:
                   - condition: template
@@ -263,9 +252,7 @@ action:
                         sequence:
                           - stop: "Presence cleared before ON hold elapsed; abort ON actions."
                     default: []
-            default: []
-
-          # Turn ON immediately when allowed (fast path)
+          # Turn ON fast-path
           - choose:
               - conditions:
                   - condition: template
@@ -274,9 +261,7 @@ action:
                   - service: homeassistant.turn_on
                     target:
                       entity_id: !input on_entities
-            default: []
-
-          # TTS: presence detected (omit voice option for engines that don't support it)
+          # TTS
           - choose:
               - conditions:
                   - condition: template
@@ -298,17 +283,19 @@ action:
                               media_player_entity_id: !input media_players
                               options:
                                 voice: "{{ tts_voice_name }}"
-                    default:
-                      - service: tts.speak
-                        target:
-                          entity_id: !input tts_engine
-                        data:
-                          message: "{{ msg_detected }}"
-                          cache: "{{ tts_cache_val }}"
-                          media_player_entity_id: !input media_players
-            default: []
-
-          # Notify: presence detected (send to each selected Companion App device)
+                  - choose:
+                      - conditions:
+                          - condition: template
+                            value_template: "{{ not use_voice_option }}"
+                        sequence:
+                          - service: tts.speak
+                            target:
+                              entity_id: !input tts_engine
+                            data:
+                              message: "{{ msg_detected }}"
+                              cache: "{{ tts_cache_val }}"
+                              media_player_entity_id: !input media_players
+          # Notifications
           - choose:
               - conditions:
                   - condition: template
@@ -317,18 +304,97 @@ action:
                   - repeat:
                       for_each: "{{ notify_devices }}"
                       sequence:
-                        # Primary: per-device mobile_app notify service
                         - service: "{{ 'notify.mobile_app_' ~ (device_attr(repeat.item, 'name') | string | lower | regex_replace('[^a-z0-9]+','_')) }}"
                           data:
                             message: "{{ msg_detected }}"
-                        # Fallback: generic notify with device_id target (some setups support this)
                         - service: notify.notify
                           data:
                             message: "{{ msg_detected }}"
                             target:
                               - device_id: "{{ repeat.item }}"
-            default: []
 
-      # ===== PRESENCE CLEARED =====
+      # -------- CLEARED --------
       - conditions:
-          - condition: t
+          - condition: trigger
+            id: presence_off
+        sequence:
+          # Hold if > 0
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ (off_hold | int) > 0 }}"
+                sequence:
+                  - wait_for_trigger:
+                      - platform: state
+                        entity_id: !input presence_sensor
+                        to: "on"
+                    timeout:
+                      seconds: !input off_hold_secs
+                    continue_on_timeout: true
+                  - choose:
+                      - conditions:
+                          - condition: template
+                            value_template: "{{ wait and wait.completed | default(false) }}"
+                        sequence:
+                          - stop: "Presence returned before OFF hold elapsed; abort OFF actions."
+                    default: []
+          # Turn OFF fast-path
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ (off_entities | length) > 0 }}"
+                sequence:
+                  - service: homeassistant.turn_off
+                    target:
+                      entity_id: !input off_entities
+          # TTS
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ has_tts }}"
+                sequence:
+                  - delay:
+                      milliseconds: "{{ tts_preroll_ms | int }}"
+                  - choose:
+                      - conditions:
+                          - condition: template
+                            value_template: "{{ use_voice_option }}"
+                        sequence:
+                          - service: tts.speak
+                            target:
+                              entity_id: !input tts_engine
+                            data:
+                              message: "{{ msg_cleared }}"
+                              cache: "{{ tts_cache_val }}"
+                              media_player_entity_id: !input media_players
+                              options:
+                                voice: "{{ tts_voice_name }}"
+                  - choose:
+                      - conditions:
+                          - condition: template
+                            value_template: "{{ not use_voice_option }}"
+                        sequence:
+                          - service: tts.speak
+                            target:
+                              entity_id: !input tts_engine
+                            data:
+                              message: "{{ msg_cleared }}"
+                              cache: "{{ tts_cache_val }}"
+                              media_player_entity_id: !input media_players
+          # Notifications
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ can_notify }}"
+                sequence:
+                  - repeat:
+                      for_each: "{{ notify_devices }}"
+                      sequence:
+                        - service: "{{ 'notify.mobile_app_' ~ (device_attr(repeat.item, 'name') | string | lower | regex_replace('[^a-z0-9]+','_')) }}"
+                          data:
+                            message: "{{ msg_cleared }}"
+                        - service: notify.notify
+                          data:
+                            message: "{{ msg_cleared }}"
+                            target:
+                              - device_id: "{{ repeat.item }}"
