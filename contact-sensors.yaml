@@ -1,7 +1,7 @@
 blueprint:
-  name: Aqara Sensor Announce Contact Sensors, Queued)
+  name: "Aqara: Contact Sensors"
   description: |-
-    ![Aqara](https://www.allthethings.best/wp-content/uploads/2025/05/Aqara-logo-scaled.jpg)
+    ![Aqara](https://raw.githubusercontent.com/zodyking/Aqara-Lock---Sensor-Blueprint/refs/heads/main/Image2.png)
 
     Sensor-only blueprint for door/window contact sensors with optional spoken announcements,
     “still open” reminders, and optional actions when the sensor opens.
@@ -44,18 +44,16 @@ blueprint:
       name: Opening type (affects TTS wording)
       description: |-
         Controls how the default TTS refers to the opening (used with the Area name):
-          • Bedroom  → “<room> door was <action>”
-          • Hallway  → “<room> door was <action>”
+          • Standard → “<room> door was <action>”
           • Closet   → “<room> closet door was <action>”
           • Entrance → “<room> entrance door was <action>”
           • Window   → “<room> window was <action>”
-      default: bedroom
+      default: standard
       selector:
         select:
           mode: dropdown
           options:
-            - bedroom
-            - hallway
+            - standard
             - closet
             - entrance
             - window
@@ -181,7 +179,7 @@ action:
       # Build the spoken subject based on opening type
       subject_sensor: >-
         {% set r = room_for_sensor %}
-        {% set t = (type_in or 'bedroom') %}
+        {% set t = (type_in or 'standard') %}
         {% if t == 'window' %}
           {{ r }} window
         {% elif t in ['closet','entrance'] %}
