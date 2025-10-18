@@ -1,0 +1,60 @@
+blueprint:
+  name: Queued TTS Announcer
+  description: "Speaks messages via tts.speak to one or more media players, in order. Use this from any automation. Messages queue; no overlaps."
+  domain: script
+  source_url: https://example.com/blueprints/zody/queued_tts.yaml
+
+fields:
+  message:
+    name: Message
+    description: "What to say."
+    required: true
+    selector:
+      text: {}
+
+  media_players:
+    name: Media players
+    description: "One or more media_player entities."
+    required: true
+    selector:
+      entity:
+        domain: media_player
+        multiple: true
+
+  cache:
+    name: Cache TTS audio
+    description: "If true, Home Assistant may cache synthesized speech."
+    required: false
+    default: false
+    selector:
+      boolean: {}
+
+  voice:
+    name: Voice (optional)
+    description: "If your TTS provider supports a voice option (tts.speak -> options.voice). Leave blank to use default."
+    required: false
+    default: ""
+    selector:
+      text: {}
+
+sequence:
+  - choose:
+      - conditions: "{{ (voice | default('')) | length > 0 }}"
+        sequence:
+          - service: tts.speak
+            data:
+              message: "{{ message }}"
+              cache: "{{ cache | default(false) }}"
+              media_player_entity_id: "{{ media_players }}"
+              options:
+                voice: "{{ voice }}"
+      - conditions: []
+        sequence:
+          - service: tts.speak
+            data:
+              message: "{{ message }}"
+              cache: "{{ cache | default(false) }}"
+              media_player_entity_id: "{{ media_players }}"
+
+mode: queued
+max: 50
