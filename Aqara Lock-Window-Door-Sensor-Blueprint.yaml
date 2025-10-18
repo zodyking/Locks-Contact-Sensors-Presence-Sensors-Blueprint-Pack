@@ -80,15 +80,6 @@ blueprint:
       selector:
         boolean: {}
 
-    suppress_autolock_tts:
-      name: Suppress lock TTS when this automation locks
-      description: |-
-        If on, we do NOT speak the "locked" message when this automation performs the lock
-        (prevents back-to-back CLOSED + LOCKED TTS which can be choppy). Manual/other lock changes still announce.
-      default: true
-      selector:
-        boolean: {}
-
     tts_engine:
       name: TTS engine
       description: |-
@@ -111,7 +102,7 @@ blueprint:
       name: Cache TTS audio
       description: |-
         Let Home Assistant cache synthesized speech when supported.
-      default: true
+      default: false
       selector:
         boolean: {}
 
@@ -122,6 +113,21 @@ blueprint:
       default: ""
       selector:
         text: {}
+
+    # NEW: tiny pre-roll to prevent clipping/choppy first word
+    tts_preroll_ms:
+      name: TTS pre-roll (milliseconds)
+      description: |-
+        Short delay before speaking to avoid clipping the start of the message.
+        Increase if the first word is still cut (typical: 300–600ms).
+      default: 400
+      selector:
+        number:
+          min: 0
+          max: 1500
+          step: 50
+          unit_of_measurement: ms
+          mode: slider
 
     custom_open_msg:
       name: Custom message — sensor OPENED (optional)
@@ -163,13 +169,11 @@ trigger:
     platform: state
     entity_id: !input door_sensor
     to: "on"
-    for: "00:00:00.3"   # debounce bounce
 
   - id: sensor_closed
     platform: state
     entity_id: !input door_sensor
     to: "off"
-    for: "00:00:00.3"   # debounce bounce
 
   - id: lock_changed
     platform: state
@@ -186,7 +190,7 @@ action:
       sensor_name: "{{ state_attr(sensor_ent, 'friendly_name') or sensor_ent }}"
       lock_name: "{{ state_attr(lock_ent, 'friendly_name') or lock_ent }}"
 
-      # Inputs
+      # Inputs (bound so templates can read them)
       players: !input media_players
       tts_engine_ent: !input tts_engine
       tts_voice_name: !input tts_voice
@@ -194,7 +198,13 @@ action:
       announce_sensor: !input announce_sensor
       announce_lock: !input announce_lock
       stability: !input closed_stability
-      suppress_autolock_tts: !input suppress_autolock_tts
+      tts_preroll_ms: !input tts_preroll_ms
+
+      # Custom message inputs (explicitly bound)
+      custom_open_msg_in: !input custom_open_msg
+      custom_closed_msg_in: !input custom_closed_msg
+      custom_locked_msg_in: !input custom_locked_msg
+      custom_unlocked_msg_in: !input custom_unlocked_msg
 
       # Can/should we speak?
       has_tts: >-
@@ -204,25 +214,22 @@ action:
       do_tts_lock: "{{ has_tts and announce_lock }}"
       has_voice: "{{ (tts_voice_name | default('') | trim) != '' }}"
 
-      # Custom message inputs
-      custom_open_msg_in: !input custom_open_msg
-      custom_closed_msg_in: !input custom_closed_msg
-      custom_locked_msg_in: !input custom_locked_msg
-      custom_unlocked_msg_in: !input custom_unlocked_msg
-
-      # Final message strings
+      # Final message strings (used everywhere)
       final_opened: >-
         {% set base = (custom_open_msg_in | default('', true) | trim) %}
         {% if base %}{{ base.replace('{door}', sensor_name).replace('{sensor}', sensor_name) }}
         {% else %}{{ sensor_name ~ ' opened.' }}{% endif %}
+
       final_closed: >-
         {% set base = (custom_closed_msg_in | default('', true) | trim) %}
         {% if base %}{{ base.replace('{door}', sensor_name).replace('{sensor}', sensor_name) }}
         {% else %}{{ sensor_name ~ ' closed.' }}{% endif %}
+
       final_locked: >-
         {% set base = (custom_locked_msg_in | default('', true) | trim) %}
         {% if base %}{{ base.replace('{lock}', lock_name) }}
         {% else %}{{ lock_name ~ ' locked.' }}{% endif %}
+
       final_unlocked: >-
         {% set base = (custom_unlocked_msg_in | default('', true) | trim) %}
         {% if base %}{{ base.replace('{lock}', lock_name) }}
@@ -240,6 +247,9 @@ action:
                   - condition: template
                     value_template: "{{ do_tts_sensor }}"
                 sequence:
+                  # PRE-ROLL to avoid clipping
+                  - delay:
+                      milliseconds: "{{ tts_preroll_ms | int }}"
                   - choose:
                       - conditions:
                           - condition: template
@@ -266,12 +276,14 @@ action:
           - condition: trigger
             id: sensor_closed
         sequence:
-          # Speak CLOSED immediately
+          # Speak CLOSED immediately (with pre-roll)
           - choose:
               - conditions:
                   - condition: template
                     value_template: "{{ do_tts_sensor }}"
                 sequence:
+                  - delay:
+                      milliseconds: "{{ tts_preroll_ms | int }}"
                   - choose:
                       - conditions:
                           - condition: template
@@ -365,12 +377,14 @@ action:
           - service: lock.lock
             target: { entity_id: !input lock_entity }
 
-          # Optional: speak lock result (usually suppressed to avoid choppy back-to-back TTS)
+          # Speak lock result (optional)
           - choose:
               - conditions:
                   - condition: template
-                    value_template: "{{ do_tts_lock and not suppress_autolock_tts }}"
+                    value_template: "{{ do_tts_lock }}"
                 sequence:
+                  - delay:
+                      milliseconds: "{{ tts_preroll_ms | int }}"
                   - choose:
                       - conditions:
                           - condition: template
@@ -403,6 +417,8 @@ action:
                     value_template: >
                       {{ do_tts_lock and trigger.to_state.state in ['locked','unlocked'] }}
                 sequence:
+                  - delay:
+                      milliseconds: "{{ tts_preroll_ms | int }}"
                   - choose:
                       - conditions:
                           - condition: template
