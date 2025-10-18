@@ -10,7 +10,7 @@ blueprint:
 
     What it does
     - Announces PRESENCE DETECTED / PRESENCE CLEARED using the device’s Area name.
-    - Optional notifications to a mobile app notify service.
+    - Optional notifications to selected Home Assistant Companion App devices.
     - Optional device control:
       - Turn ON selected entities after presence has been detected for X seconds.
       - Turn OFF selected entities after no presence for Y seconds.
@@ -22,7 +22,7 @@ blueprint:
     2) (Optional) Choose a TTS engine (e.g., tts.piper) and speakers.
     3) Independently toggle:
        - Speak presence announcements
-       - Send mobile notifications
+       - Send mobile notifications (select Companion App devices)
     4) (Optional) Select entities to turn ON/OFF and set the hold times (0–10 s).
 
     Notes
@@ -101,7 +101,7 @@ blueprint:
     announce_presence:
       name: Speak presence announcements
       description: |-
-        If on, speak "<room> presence detected/cleared".
+        If on, speak “Presence detected in <room>.” and “<room> cleared.”
       default: false
       selector:
         boolean: {}
@@ -158,21 +158,23 @@ blueprint:
 
     # ---- Notifications (optional) ----
     notify_enabled:
-      name: Send mobile notification
+      name: Send mobile notifications
       description: |-
-        If on, send notifications for presence detected/cleared.
+        If on, send notifications to selected Home Assistant Companion App devices.
       default: false
       selector:
         boolean: {}
 
-    notify_service:
-      name: Notify service (e.g., notify.mobile_app_your_phone)
+    notify_devices:
+      name: Companion App devices (auto-discovered)
       description: |-
-        Exact notify service to call when notifications are enabled.
-        Example: notify.mobile_app_brandon_iphone. Leave blank to disable notifications.
-      default: ""
+        Choose one or more devices with the Home Assistant Companion App installed.
+        Notifications will be sent to each device’s mobile_app notify service.
+      default: []
       selector:
-        text: {}
+        device:
+          multiple: true
+          integration: mobile_app
 
 mode: restart
 
@@ -195,7 +197,7 @@ action:
 
       # Area → room label (no friendly names for TTS)
       room_for_presence: "{{ area_name(pres_ent) or 'Room' }}"
-      subject_presence: "{{ room_for_presence ~ ' presence' }}"
+      subject_presence: "{{ room_for_presence }}"
 
       # Action entities
       on_entities: !input on_entities
@@ -213,19 +215,19 @@ action:
       tts_voice_name: !input tts_voice
       tts_preroll_ms: !input tts_preroll_ms
 
-      # Notify plumbing
+      # Notifications
       notify_enabled: !input notify_enabled
-      notify_service: !input notify_service
+      notify_devices: !input notify_devices
 
       # Gates
       has_tts: >-
         {{ announce_presence and (players | length > 0)
            and (tts_engine_ent is string and tts_engine_ent|length > 0) }}
       can_notify: >-
-        {{ notify_enabled and (notify_service is string) and (notify_service|length > 0) }}
+        {{ notify_enabled and (notify_devices | length) > 0 }}
 
-      # Messages (non-empty strings)
-      msg_detected: "{{ subject_presence ~ ' detected.' }}"
+      # Messages (always non-empty strings)
+      msg_detected: "{{ 'Presence detected in ' ~ subject_presence ~ '.' }}"
       msg_cleared: "{{ subject_presence ~ ' cleared.' }}"
 
   - choose:
@@ -235,7 +237,7 @@ action:
           - condition: trigger
             id: presence_on
         sequence:
-          # Ensure presence holds for on_hold seconds; cancel if it clears earlier
+          # Hold (only if > 0). Faster path when 0.
           - choose:
               - conditions:
                   - condition: template
@@ -257,7 +259,7 @@ action:
                     default: []
             default: []
 
-          # Optional: turn ON entities
+          # Turn ON immediately when allowed (fast path)
           - choose:
               - conditions:
                   - condition: template
@@ -268,7 +270,7 @@ action:
                       entity_id: !input on_entities
             default: []
 
-          # TTS: presence detected
+          # TTS: presence detected (speak after action, with short pre-roll)
           - choose:
               - conditions:
                   - condition: template
@@ -281,21 +283,24 @@ action:
                       entity_id: !input tts_engine
                     data:
                       message: "{{ msg_detected }}"
-                      cache: !input tts_cache
+                      cache: "{{ tts_cache_val }}"
                       media_player_entity_id: !input media_players
                       options:
                         voice: "{{ tts_voice_name | default('') }}"
             default: []
 
-          # Notify: presence detected
+          # Notify: presence detected (send to each selected Companion App device)
           - choose:
               - conditions:
                   - condition: template
                     value_template: "{{ can_notify }}"
                 sequence:
-                  - service: "{{ notify_service }}"
-                    data:
-                      message: "{{ msg_detected }}"
+                  - repeat:
+                      for_each: "{{ notify_devices }}"
+                      sequence:
+                        - service: "{{ 'notify.mobile_app_' ~ (device_attr(repeat.item, 'name') | string | lower | regex_replace('[^a-z0-9]+','_')) }}"
+                          data:
+                            message: "{{ msg_detected }}"
             default: []
 
       # ===== PRESENCE CLEARED =====
@@ -303,7 +308,7 @@ action:
           - condition: trigger
             id: presence_off
         sequence:
-          # Ensure clear holds for off_hold seconds; cancel if presence returns earlier
+          # Hold (only if > 0). Faster path when 0.
           - choose:
               - conditions:
                   - condition: template
@@ -325,7 +330,7 @@ action:
                     default: []
             default: []
 
-          # Optional: turn OFF entities
+          # Turn OFF immediately when allowed (fast path)
           - choose:
               - conditions:
                   - condition: template
@@ -336,7 +341,7 @@ action:
                       entity_id: !input off_entities
             default: []
 
-          # TTS: presence cleared
+          # TTS: presence cleared (speak after action, with short pre-roll)
           - choose:
               - conditions:
                   - condition: template
@@ -349,19 +354,22 @@ action:
                       entity_id: !input tts_engine
                     data:
                       message: "{{ msg_cleared }}"
-                      cache: !input tts_cache
+                      cache: "{{ tts_cache_val }}"
                       media_player_entity_id: !input media_players
                       options:
                         voice: "{{ tts_voice_name | default('') }}"
             default: []
 
-          # Notify: presence cleared
+          # Notify: presence cleared (send to each selected Companion App device)
           - choose:
               - conditions:
                   - condition: template
                     value_template: "{{ can_notify }}"
                 sequence:
-                  - service: "{{ notify_service }}"
-                    data:
-                      message: "{{ msg_cleared }}"
+                  - repeat:
+                      for_each: "{{ notify_devices }}"
+                      sequence:
+                        - service: "{{ 'notify.mobile_app_' ~ (device_attr(repeat.item, 'name') | string | lower | regex_replace('[^a-z0-9]+','_')) }}"
+                          data:
+                            message: "{{ msg_cleared }}"
             default: []
