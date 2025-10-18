@@ -1,21 +1,31 @@
 blueprint:
   name: Aqara Door/Window Auto-Lock + Announce (Queued)
   description: |-
-    ![Aqara](https://www.allthethings.best/wp-content/uploads/2025/05/Aqara-logo-scaled.jpg)
+  ![Aqara](https://www.allthethings.best/wp-content/uploads/2025/05/Aqara-logo-scaled.jpg)
 
-    Auto-lock a smart lock X seconds after the contact sensor reports CLOSED (re-checks before locking).
-    Optional TTS announcements for sensor open/close and lock locked/unlocked.
-    Messages are queued (mode: queued, max: 8) to avoid audio overlap.
+  Automates an Aqara (or any) smart lock using a door/window contact sensor, with optional
+  spoken announcements. Designed for reliability and clear speech.
 
-    🔊 Default TTS phrasing uses **Area (room)** + **Door type**:
-      • Bedroom  → “<room> door was <action>”
-      • Hallway  → “<room> door was <action>”
-      • Closet   → “<room> closet door was <action>”
-      • Entrance → “<room> entrance door was <action>”
-      • Window   → “<room> window was <action>”
+  What it does
+  • Auto-locks the door X seconds after the sensor reports CLOSED.
+  • Cancels auto-lock if the sensor re-opens at any point before the lock command.
+  • Optional “closed stability” window filters sensor bounce before locking.
+  • Announces sensor OPENED/CLOSED and lock LOCKED/UNLOCKED (only after real state changes).
+  • All announcements queue (mode: queued, max: 8) to avoid overlapping audio.
+  • Built-in TTS pre-roll prevents clipped first words.
 
-    “<room>” comes from the entity’s Area (assign your sensor/lock to the correct Area).
-    Custom messages (optional) can use {room} to substitute the Area name.
+  Setup
+  1) Select the contact sensor and the lock.
+  2) (Optional) Enable announcements, choose a TTS engine (e.g., tts.piper), and select one
+     or more media_player targets.
+  3) Tune Auto-lock delay and Closed stability to match your door behavior.
+  4) (Optional) Provide custom messages; you can use {room} to insert the device’s Area name.
+
+  Notes
+  • The spoken “room” name comes from the entity’s Area (Settings → Areas). Assign your devices
+    to Areas for natural phrases.
+  • Lock announcements trigger only when the lock actually reports locked/unlocked (no guesses).
+  • Works with Aqara and other standard Home Assistant binary_sensor/lock entities.
 
   domain: automation
 
