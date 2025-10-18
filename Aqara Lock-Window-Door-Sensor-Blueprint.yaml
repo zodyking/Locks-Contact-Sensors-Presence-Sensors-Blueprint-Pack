@@ -80,6 +80,15 @@ blueprint:
       selector:
         boolean: {}
 
+    suppress_autolock_tts:
+      name: Suppress lock TTS when this automation locks
+      description: |-
+        If on, we do NOT speak the "locked" message when this automation performs the lock
+        (prevents back-to-back CLOSED + LOCKED TTS which can be choppy). Manual/other lock changes still announce.
+      default: true
+      selector:
+        boolean: {}
+
     tts_engine:
       name: TTS engine
       description: |-
@@ -102,7 +111,7 @@ blueprint:
       name: Cache TTS audio
       description: |-
         Let Home Assistant cache synthesized speech when supported.
-      default: false
+      default: true
       selector:
         boolean: {}
 
@@ -154,11 +163,13 @@ trigger:
     platform: state
     entity_id: !input door_sensor
     to: "on"
+    for: "00:00:00.3"   # debounce bounce
 
   - id: sensor_closed
     platform: state
     entity_id: !input door_sensor
     to: "off"
+    for: "00:00:00.3"   # debounce bounce
 
   - id: lock_changed
     platform: state
@@ -175,7 +186,7 @@ action:
       sensor_name: "{{ state_attr(sensor_ent, 'friendly_name') or sensor_ent }}"
       lock_name: "{{ state_attr(lock_ent, 'friendly_name') or lock_ent }}"
 
-      # Inputs (bound so templates can read them)
+      # Inputs
       players: !input media_players
       tts_engine_ent: !input tts_engine
       tts_voice_name: !input tts_voice
@@ -183,12 +194,7 @@ action:
       announce_sensor: !input announce_sensor
       announce_lock: !input announce_lock
       stability: !input closed_stability
-
-      # Custom message inputs (explicitly bound)
-      custom_open_msg_in: !input custom_open_msg
-      custom_closed_msg_in: !input custom_closed_msg
-      custom_locked_msg_in: !input custom_locked_msg
-      custom_unlocked_msg_in: !input custom_unlocked_msg
+      suppress_autolock_tts: !input suppress_autolock_tts
 
       # Can/should we speak?
       has_tts: >-
@@ -198,22 +204,25 @@ action:
       do_tts_lock: "{{ has_tts and announce_lock }}"
       has_voice: "{{ (tts_voice_name | default('') | trim) != '' }}"
 
-      # Final message strings (used everywhere)
+      # Custom message inputs
+      custom_open_msg_in: !input custom_open_msg
+      custom_closed_msg_in: !input custom_closed_msg
+      custom_locked_msg_in: !input custom_locked_msg
+      custom_unlocked_msg_in: !input custom_unlocked_msg
+
+      # Final message strings
       final_opened: >-
         {% set base = (custom_open_msg_in | default('', true) | trim) %}
         {% if base %}{{ base.replace('{door}', sensor_name).replace('{sensor}', sensor_name) }}
         {% else %}{{ sensor_name ~ ' opened.' }}{% endif %}
-
       final_closed: >-
         {% set base = (custom_closed_msg_in | default('', true) | trim) %}
         {% if base %}{{ base.replace('{door}', sensor_name).replace('{sensor}', sensor_name) }}
         {% else %}{{ sensor_name ~ ' closed.' }}{% endif %}
-
       final_locked: >-
         {% set base = (custom_locked_msg_in | default('', true) | trim) %}
         {% if base %}{{ base.replace('{lock}', lock_name) }}
         {% else %}{{ lock_name ~ ' locked.' }}{% endif %}
-
       final_unlocked: >-
         {% set base = (custom_unlocked_msg_in | default('', true) | trim) %}
         {% if base %}{{ base.replace('{lock}', lock_name) }}
@@ -356,11 +365,11 @@ action:
           - service: lock.lock
             target: { entity_id: !input lock_entity }
 
-          # Speak lock result (optional)
+          # Optional: speak lock result (usually suppressed to avoid choppy back-to-back TTS)
           - choose:
               - conditions:
                   - condition: template
-                    value_template: "{{ do_tts_lock }}"
+                    value_template: "{{ do_tts_lock and not suppress_autolock_tts }}"
                 sequence:
                   - choose:
                       - conditions:
