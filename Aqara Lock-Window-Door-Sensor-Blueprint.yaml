@@ -114,13 +114,13 @@ blueprint:
       selector:
         text: {}
 
-    # NEW: tiny pre-roll to prevent clipping/choppy first word
+    # Pre-roll to avoid clipped first word; lower this to make TTS start faster
     tts_preroll_ms:
       name: TTS pre-roll (milliseconds)
       description: |-
         Short delay before speaking to avoid clipping the start of the message.
-        Increase if the first word is still cut (typical: 300–600ms).
-      default: 400
+        If it feels slow, reduce (typical: 200–400 ms).
+      default: 250
       selector:
         number:
           min: 0
@@ -200,7 +200,7 @@ action:
       stability: !input closed_stability
       tts_preroll_ms: !input tts_preroll_ms
 
-      # Custom message inputs (explicitly bound)
+      # Custom message inputs
       custom_open_msg_in: !input custom_open_msg
       custom_closed_msg_in: !input custom_closed_msg
       custom_locked_msg_in: !input custom_locked_msg
@@ -214,22 +214,19 @@ action:
       do_tts_lock: "{{ has_tts and announce_lock }}"
       has_voice: "{{ (tts_voice_name | default('') | trim) != '' }}"
 
-      # Final message strings (used everywhere)
+      # Final message strings
       final_opened: >-
         {% set base = (custom_open_msg_in | default('', true) | trim) %}
         {% if base %}{{ base.replace('{door}', sensor_name).replace('{sensor}', sensor_name) }}
         {% else %}{{ sensor_name ~ ' opened.' }}{% endif %}
-
       final_closed: >-
         {% set base = (custom_closed_msg_in | default('', true) | trim) %}
         {% if base %}{{ base.replace('{door}', sensor_name).replace('{sensor}', sensor_name) }}
         {% else %}{{ sensor_name ~ ' closed.' }}{% endif %}
-
       final_locked: >-
         {% set base = (custom_locked_msg_in | default('', true) | trim) %}
         {% if base %}{{ base.replace('{lock}', lock_name) }}
         {% else %}{{ lock_name ~ ' locked.' }}{% endif %}
-
       final_unlocked: >-
         {% set base = (custom_unlocked_msg_in | default('', true) | trim) %}
         {% if base %}{{ base.replace('{lock}', lock_name) }}
@@ -247,7 +244,6 @@ action:
                   - condition: template
                     value_template: "{{ do_tts_sensor }}"
                 sequence:
-                  # PRE-ROLL to avoid clipping
                   - delay:
                       milliseconds: "{{ tts_preroll_ms | int }}"
                   - choose:
@@ -313,7 +309,6 @@ action:
             timeout:
               seconds: !input lock_delay
             continue_on_timeout: true
-
           - choose:
               - conditions:
                   - condition: template
@@ -353,7 +348,6 @@ action:
           - condition: state
             entity_id: !input door_sensor
             state: "off"
-
           - wait_for_trigger:
               - platform: state
                 entity_id: !input door_sensor
@@ -361,7 +355,6 @@ action:
             timeout:
               seconds: 1
             continue_on_timeout: true
-
           - choose:
               - conditions:
                   - condition: template
@@ -373,38 +366,8 @@ action:
           # Only lock if not already locked
           - condition: template
             value_template: "{{ not is_state(lock_ent, 'locked') }}"
-
           - service: lock.lock
             target: { entity_id: !input lock_entity }
-
-          # Speak lock result (optional)
-          - choose:
-              - conditions:
-                  - condition: template
-                    value_template: "{{ do_tts_lock }}"
-                sequence:
-                  - delay:
-                      milliseconds: "{{ tts_preroll_ms | int }}"
-                  - choose:
-                      - conditions:
-                          - condition: template
-                            value_template: "{{ has_voice }}"
-                        sequence:
-                          - service: tts.speak
-                            target: { entity_id: !input tts_engine }
-                            data:
-                              message: "{{ final_locked }}"
-                              cache: !input tts_cache
-                              media_player_entity_id: !input media_players
-                              options: { voice: !input tts_voice }
-                    default:
-                      - service: tts.speak
-                        target: { entity_id: !input tts_engine }
-                        data:
-                          message: "{{ final_locked }}"
-                          cache: !input tts_cache
-                          media_player_entity_id: !input media_players
-            default: []
 
       # ---------- LOCK CHANGED (only locked/unlocked) ----------
       - conditions:
