@@ -75,7 +75,7 @@ blueprint:
     announce_lock:
       name: Announce lock state changes
       description: |-
-        If on, we announce locked/unlocked/locking/unlocking/jammed.
+        If on, we announce locked/unlocked (transitional states are ignored).
       default: true
       selector:
         boolean: {}
@@ -179,7 +179,6 @@ action:
       players: !input media_players
       tts_engine_ent: !input tts_engine
       tts_voice_name: !input tts_voice
-      tts_cache_val: !input tts_cache
       announce_enabled: !input announce_enabled
       announce_sensor: !input announce_sensor
       announce_lock: !input announce_lock
@@ -384,7 +383,7 @@ action:
                           media_player_entity_id: !input media_players
             default: []
 
-      # ---------- LOCK CHANGED ----------
+      # ---------- LOCK CHANGED (only locked/unlocked) ----------
       - conditions:
           - condition: trigger
             id: lock_changed
@@ -392,7 +391,8 @@ action:
           - choose:
               - conditions:
                   - condition: template
-                    value_template: "{{ do_tts_lock }}"
+                    value_template: >
+                      {{ do_tts_lock and trigger.to_state.state in ['locked','unlocked'] }}
                 sequence:
                   - choose:
                       - conditions:
@@ -403,11 +403,11 @@ action:
                             target: { entity_id: !input tts_engine }
                             data:
                               message: >-
-                                {% set s = trigger.to_state.state %}
-                                {% if s == 'locked' %}{{ final_locked }}
-                                {% elif s == 'unlocked' %}{{ final_unlocked }}
-                                {% elif s in ['locking','unlocking','jammed'] %}{{ lock_name }} is {{ s }}.
-                                {% else %}{% endif %}
+                                {% if trigger.to_state.state == 'locked' %}
+                                  {{ final_locked }}
+                                {% else %}
+                                  {{ final_unlocked }}
+                                {% endif %}
                               cache: !input tts_cache
                               media_player_entity_id: !input media_players
                               options: { voice: !input tts_voice }
@@ -416,11 +416,11 @@ action:
                         target: { entity_id: !input tts_engine }
                         data:
                           message: >-
-                            {% set s = trigger.to_state.state %}
-                            {% if s == 'locked' %}{{ final_locked }}
-                            {% elif s == 'unlocked' %}{{ final_unlocked }}
-                            {% elif s in ['locking','unlocking','jammed'] %}{{ lock_name }} is {{ s }}.
-                            {% else %}{% endif %}
+                            {% if trigger.to_state.state == 'locked' %}
+                              {{ final_locked }}
+                            {% else %}
+                              {{ final_unlocked }}
+                            {% endif %}
                           cache: !input tts_cache
                           media_player_entity_id: !input media_players
             default: []
