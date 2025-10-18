@@ -248,23 +248,6 @@ blueprint:
       selector:
         text: {}
 
-    # Reminder custom messages
-    custom_open_reminder_msg:
-      name: Custom message — reminder while OPEN (optional)
-      description: |-
-        Use {room}. Example: "{room} door is still open."
-      default: ""
-      selector:
-        text: {}
-
-    custom_unlocked_reminder_msg:
-      name: Custom message — reminder while UNLOCKED (optional)
-      description: |-
-        Use {room}. Example: "{room} door is still unlocked."
-      default: ""
-      selector:
-        text: {}
-
 mode: queued
 max: 8
 
@@ -337,13 +320,11 @@ action:
       reminder_interval: !input reminder_interval
       open_turn_on_entities: !input open_turn_on_entities
 
-      # Custom message inputs
+      # Custom message inputs (non-reminder)
       custom_open_msg_in: !input custom_open_msg
       custom_closed_msg_in: !input custom_closed_msg
       custom_locked_msg_in: !input custom_locked_msg
       custom_unlocked_msg_in: !input custom_unlocked_msg
-      custom_open_reminder_msg_in: !input custom_open_reminder_msg
-      custom_unlocked_reminder_msg_in: !input custom_unlocked_reminder_msg
 
       # Can/should we speak?
       has_tts: >-
@@ -373,15 +354,9 @@ action:
         {% if base %}{{ base.replace('{room}', room_for_lock) }}
         {% else %}{{ subject_lock ~ ' was unlocked.' }}{% endif %}
 
-      # Reminder messages
-      final_open_reminder: |-
-        {% set base = (custom_open_reminder_msg_in | default('', true) | trim) %}
-        {% if base %}{{ base.replace('{room}', room_for_sensor) }}
-        {% else %}{{ subject_sensor ~ ' is still open.' }}{% endif %}
-      final_unlocked_reminder: |-
-        {% set base = (custom_unlocked_reminder_msg_in | default('', true) | trim) %}
-        {% if base %}{{ base.replace('{room}', room_for_lock) }}
-        {% else %}{{ subject_lock ~ ' is still unlocked.' }}{% endif %}
+      # Auto-generated reminder messages (no inputs)
+      final_open_reminder: "{{ subject_sensor ~ ' is still open.' }}"
+      final_unlocked_reminder: "{{ subject_lock ~ ' is still unlocked.' }}"
 
   - choose:
 
@@ -410,7 +385,9 @@ action:
                   - delay:
                       milliseconds: "{{ tts_preroll_ms | int }}"
                   - choose:
-                      - conditions: [{ condition: template, value_template: "{{ has_voice }}" }]
+                      - conditions:
+                          - condition: template
+                            value_template: "{{ has_voice }}"
                         sequence:
                           - service: tts.speak
                             target: { entity_id: !input tts_engine }
@@ -448,7 +425,9 @@ action:
                         - delay:
                             milliseconds: "{{ tts_preroll_ms | int }}"
                         - choose:
-                            - conditions: [{ condition: template, value_template: "{{ has_voice }}" }]
+                            - conditions:
+                                - condition: template
+                                  value_template: "{{ has_voice }}"
                               sequence:
                                 - service: tts.speak
                                   target: { entity_id: !input tts_engine }
@@ -480,7 +459,9 @@ action:
                   - delay:
                       milliseconds: "{{ tts_preroll_ms | int }}"
                   - choose:
-                      - conditions: [{ condition: template, value_template: "{{ has_voice }}" }]
+                      - conditions:
+                          - condition: template
+                            value_template: "{{ has_voice }}"
                         sequence:
                           - service: tts.speak
                             target: { entity_id: !input tts_engine }
@@ -507,7 +488,9 @@ action:
               seconds: !input lock_delay
             continue_on_timeout: true
           - choose:
-              - conditions: [{ condition: template, value_template: "{{ wait.completed | default(false) }}" }]
+              - conditions:
+                  - condition: template
+                    value_template: "{{ wait.completed | default(false) }}"
                 sequence:
                   - stop: "Door reopened during delay; cancel auto-lock."
             default: []
@@ -519,7 +502,9 @@ action:
 
           # Guard 2: optional stability window; cancel if opens
           - choose:
-              - conditions: [{ condition: template, value_template: "{{ (stability | int) > 0 }}" }]
+              - conditions:
+                  - condition: template
+                    value_template: "{{ (stability | int) > 0 }}"
                 sequence:
                   - wait_for_trigger:
                       - platform: state
@@ -529,7 +514,9 @@ action:
                       seconds: !input closed_stability
                     continue_on_timeout: true
                   - choose:
-                      - conditions: [{ condition: template, value_template: "{{ wait.completed | default(false) }}" }]
+                      - conditions:
+                          - condition: template
+                            value_template: "{{ wait.completed | default(false) }}"
                         sequence:
                           - stop: "Door reopened during stability; cancel auto-lock."
                     default: []
@@ -547,7 +534,9 @@ action:
               seconds: 1
             continue_on_timeout: true
           - choose:
-              - conditions: [{ condition: template, value_template: "{{ wait.completed | default(false) }}" }]
+              - conditions:
+                  - condition: template
+                    value_template: "{{ wait.completed | default(false) }}"
                 sequence:
                   - stop: "Door reopened at final guard; cancel auto-lock."
             default: []
@@ -578,7 +567,9 @@ action:
                   - delay:
                       milliseconds: "{{ tts_preroll_ms | int }}"
                   - choose:
-                      - conditions: [{ condition: template, value_template: "{{ has_voice }}" }]
+                      - conditions:
+                          - condition: template
+                            value_template: "{{ has_voice }}"
                         sequence:
                           - service: tts.speak
                             target: { entity_id: !input tts_engine }
@@ -625,7 +616,9 @@ action:
                                 - delay:
                                     milliseconds: "{{ tts_preroll_ms | int }}"
                                 - choose:
-                                    - conditions: [{ condition: template, value_template: "{{ has_voice }}" }]
+                                    - conditions:
+                                        - condition: template
+                                          value_template: "{{ has_voice }}"
                                       sequence:
                                         - service: tts.speak
                                           target: { entity_id: !input tts_engine }
@@ -634,12 +627,11 @@ action:
                                             cache: !input tts_cache
                                             media_player_entity_id: !input media_players
                                             options: { voice: !input tts_voice }
-                                - choose:
-                                    default:
-                                      - service: tts.speak
-                                        target: { entity_id: !input tts_engine }
-                                        data:
-                                          message: "{{ final_unlocked_reminder }}"
-                                          cache: !input tts_cache
-                                          media_player_entity_id: !input media_players
+                                  default:
+                                    - service: tts.speak
+                                      target: { entity_id: !input tts_engine }
+                                      data:
+                                        message: "{{ final_unlocked_reminder }}"
+                                        cache: !input tts_cache
+                                        media_player_entity_id: !input media_players
             default: []
