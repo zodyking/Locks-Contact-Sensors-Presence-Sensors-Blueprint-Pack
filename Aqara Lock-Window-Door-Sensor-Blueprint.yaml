@@ -176,7 +176,6 @@ action:
       has_voice: "{{ (tts_voice_name | default('') | trim) != '' }}"
       stability: !input closed_stability
 
-      # Prebuilt messages
       msg_open: >-
         {% set base = (custom_open_msg | default('') | trim) %}
         {{ base.replace('{door}', sensor_name) if base else sensor_name ~ ' opened.' }}
@@ -202,25 +201,22 @@ action:
                             value_template: "{{ has_voice }}"
                         sequence:
                           - service: tts.speak
-                            target:
-                              entity_id: !input tts_engine
+                            target: { entity_id: !input tts_engine }
                             data:
                               message: "{{ msg_open }}"
                               cache: "{{ tts_cache_val }}"
                               media_player_entity_id: !input media_players
-                              options:
-                                voice: !input tts_voice
+                              options: { voice: !input tts_voice }
                     default:
                       - service: tts.speak
-                        target:
-                          entity_id: !input tts_engine
+                        target: { entity_id: !input tts_engine }
                         data:
                           message: "{{ msg_open }}"
                           cache: "{{ tts_cache_val }}"
                           media_player_entity_id: !input media_players
             default: []
 
-      # ---------- SENSOR CLOSED (speak first, then guarded lock) ----------
+      # ---------- SENSOR CLOSED (speak first, then fully guarded auto-lock) ----------
       - conditions:
           - condition: trigger
             id: sensor_closed
@@ -237,18 +233,15 @@ action:
                             value_template: "{{ has_voice }}"
                         sequence:
                           - service: tts.speak
-                            target:
-                              entity_id: !input tts_engine
+                            target: { entity_id: !input tts_engine }
                             data:
                               message: "{{ msg_closed }}"
                               cache: "{{ tts_cache_val }}"
                               media_player_entity_id: !input media_players
-                              options:
-                                voice: !input tts_voice
+                              options: { voice: !input tts_voice }
                     default:
                       - service: tts.speak
-                        target:
-                          entity_id: !input tts_engine
+                        target: { entity_id: !input tts_engine }
                         data:
                           message: "{{ msg_closed }}"
                           cache: "{{ tts_cache_val }}"
@@ -299,16 +292,33 @@ action:
                     default: []
             default: []
 
-          # Final re-check and lock
+          # Final re-check
           - condition: state
             entity_id: !input door_sensor
             state: "off"
+
+          # FINAL GUARD: catch a last-moment reopen before the lock command
+          - wait_for_trigger:
+              - platform: state
+                entity_id: !input door_sensor
+                to: "on"
+            timeout:
+              seconds: 1
+            continue_on_timeout: true
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ wait.completed | default(false) }}"
+                sequence:
+                  - stop: "Door reopened at final guard; cancel auto-lock."
+            default: []
+
+          # Only lock if not already locked
           - condition: template
             value_template: "{{ not is_state(lock_ent, 'locked') }}"
 
           - service: lock.lock
-            target:
-              entity_id: !input lock_entity
+            target: { entity_id: !input lock_entity }
 
           # Speak lock result (optional)
           - choose:
@@ -322,19 +332,16 @@ action:
                             value_template: "{{ has_voice }}"
                         sequence:
                           - service: tts.speak
-                            target:
-                              entity_id: !input tts_engine
+                            target: { entity_id: !input tts_engine }
                             data:
                               message: >-
                                 {{ (custom_locked_msg | trim) and custom_locked_msg.replace('{lock}', lock_name) or (lock_name ~ ' locked.') }}
                               cache: "{{ tts_cache_val }}"
                               media_player_entity_id: !input media_players
-                              options:
-                                voice: !input tts_voice
+                              options: { voice: !input tts_voice }
                     default:
                       - service: tts.speak
-                        target:
-                          entity_id: !input tts_engine
+                        target: { entity_id: !input tts_engine }
                         data:
                           message: >-
                             {{ (custom_locked_msg | trim) and custom_locked_msg.replace('{lock}', lock_name) or (lock_name ~ ' locked.') }}
@@ -358,8 +365,7 @@ action:
                             value_template: "{{ has_voice }}"
                         sequence:
                           - service: tts.speak
-                            target:
-                              entity_id: !input tts_engine
+                            target: { entity_id: !input tts_engine }
                             data:
                               message: >-
                                 {% set s = trigger.to_state.state %}
@@ -374,12 +380,10 @@ action:
                                 {% else %}{% endif %}
                               cache: "{{ tts_cache_val }}"
                               media_player_entity_id: !input media_players
-                              options:
-                                voice: !input tts_voice
+                              options: { voice: !input tts_voice }
                     default:
                       - service: tts.speak
-                        target:
-                          entity_id: !input tts_engine
+                        target: { entity_id: !input tts_engine }
                         data:
                           message: >-
                             {% set s = trigger.to_state.state %}
