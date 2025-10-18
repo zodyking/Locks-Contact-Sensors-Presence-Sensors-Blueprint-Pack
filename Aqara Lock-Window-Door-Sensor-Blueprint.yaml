@@ -1,185 +1,275 @@
 blueprint:
-  name: Aqara Door Auto-Lock + TTS (Queued)
+  name: Aqara Door Auto-Lock + Announce (Queued)
   description: >
-    Auto-lock an Aqara (or any) lock X seconds after the door sensor reports closed
-    (re-checks before locking). Optional TTS announcements for ALL state changes of
-    the door sensor and the lock. If you select the queued TTS script created from
-    the companion script blueprint, announcements are queued (no overlaps).
+    Auto-lock a smart lock X seconds after the door contact sensor reports CLOSED (re-checks before locking).
+    Optional TTS announcements for ALL state changes of the door sensor and the lock.
+    Messages queue (no overlap) because this automation runs in `mode: queued`.
   domain: automation
-  source_url: https://example.com/blueprints/zody/aqara_autolock_tts.yaml
 
   input:
     door_sensor:
       name: Door contact sensor
-      description: "Use a binary_sensor with device_class 'door'/'opening' (Aqara contact sensor). OFF = closed, ON = open."
+      description: >
+        Pick the contact sensor for THIS door. For most Aqara sensors, ON = open and OFF = closed.
+        Device class should be `door` or `opening`.
       selector:
         entity:
           domain: binary_sensor
           device_class:
             - door
             - opening
-            - window
 
     lock_entity:
-      name: Door lock
-      description: "Your Aqara (or any) lock entity."
+      name: Smart lock
+      description: "Pick the lock entity to control (Aqara or any `lock.*`)."
       selector:
         entity:
           domain: lock
 
     lock_delay:
-      name: Delay before auto-lock (seconds)
-      description: "How long after the door closes to attempt locking."
+      name: Auto-lock delay (seconds)
+      description: "How long after the sensor first reports CLOSED to attempt locking."
       default: 10
       selector:
         number:
           min: 0
-          max: 1200
+          max: 3600
           unit_of_measurement: seconds
           mode: slider
 
-    tts_enabled:
-      name: Enable TTS announcements
-      description: "If enabled, announces all door/lock state changes."
+    closed_stability:
+      name: Closed stability window (seconds)
+      description: >
+        Extra time the door must remain closed (no bounce) before locking.
+        Set to 0 to skip. After the main delay we wait this long and re-check closed.
+      default: 0
+      selector:
+        number:
+          min: 0
+          max: 120
+          unit_of_measurement: seconds
+          mode: slider
+
+    announce_enabled:
+      name: Speak announcements
+      description: "Turn on to speak every door/lock state change."
       default: false
       selector:
         boolean: {}
 
-    tts_media_players:
-      name: TTS media players
-      description: "One or more media_player entities for announcements (used only if TTS is enabled)."
+    announce_door:
+      name: Announce door open/close
+      description: "If on, we announce door opened/closed events."
+      default: true
+      selector:
+        boolean: {}
+
+    announce_lock:
+      name: Announce lock state changes
+      description: "If on, we announce locked/unlocked/locking/unlocking/jammed."
+      default: true
+      selector:
+        boolean: {}
+
+    media_players:
+      name: Speakers for TTS
+      description: "One or more media_player entities to speak on (used only if announcements are enabled)."
       default: []
       selector:
         entity:
           domain: media_player
           multiple: true
 
-    tts_queue_script:
-      name: (Optional) Queued TTS script entity
-      description: "Select the script created from the 'Queued TTS Announcer' blueprint to ensure messages are queued."
-      default: ""
-      selector:
-        entity:
-          domain: script
-
     tts_cache:
       name: Cache TTS audio
+      description: "Let Home Assistant cache synthesized speech when supported."
       default: false
       selector:
         boolean: {}
 
-mode: parallel
-max: 10
+    tts_voice:
+      name: Voice name (optional)
+      description: >
+        If your TTS provider supports a voice option (tts.speak -> options.voice), put it here.
+        Leave blank to use the provider's default voice.
+      default: ""
+      selector:
+        text: {}
 
-variables:
-  door_sensor: !input door_sensor
-  lock_entity: !input lock_entity
-  door_name: "{{ state_attr(door_sensor, 'friendly_name') or door_sensor }}"
-  lock_name: "{{ state_attr(lock_entity, 'friendly_name') or lock_entity }}"
-  tts_enabled: !input tts_enabled
-  tts_media_players: !input tts_media_players
-  tts_cache: !input tts_cache
-  tts_queue_script: !input tts_queue_script
+    custom_open_msg:
+      name: Custom message — door OPENED (optional)
+      description: 'Use {door} placeholder, e.g. "{door} opened." Leave blank for default.'
+      default: ""
+      selector:
+        text: {}
+
+    custom_closed_msg:
+      name: Custom message — door CLOSED (optional)
+      description: 'Use {door} placeholder, e.g. "{door} closed." Leave blank for default.'
+      default: ""
+      selector:
+        text: {}
+
+    custom_locked_msg:
+      name: Custom message — LOCKED (optional)
+      description: 'Use {lock} placeholder, e.g. "{lock} locked." Leave blank for default.'
+      default: ""
+      selector:
+        text: {}
+
+    custom_unlocked_msg:
+      name: Custom message — UNLOCKED (optional)
+      description: 'Use {lock} placeholder, e.g. "{lock} unlocked." Leave blank for default.'
+      default: ""
+      selector:
+        text: {}
+
+mode: queued
+max: 50
 
 trigger:
-  # (1) Fire when the door becomes CLOSED (used for autolock)
+  # Start the auto-lock timer when the door first becomes CLOSED.
   - id: door_closed
     platform: state
     entity_id: !input door_sensor
     to: "off"
 
-  # (2) Fire on ANY door state change (for announcements)
+  # Announcements: any door change
   - id: door_changed
     platform: state
     entity_id: !input door_sensor
 
-  # (3) Fire on ANY lock state change (for announcements)
+  # Announcements: any lock change
   - id: lock_changed
     platform: state
     entity_id: !input lock_entity
 
-# We'll generate a readable message for door/lock changes
-# Note: For Aqara/ZHA/Z2M contacts, ON = open, OFF = closed.
-# Lock states include: locked, unlocked, locking, unlocking, jammed (vendor/platform dependent).
-variables:
-  tts_message: >-
-    {% if trigger.id == 'door_changed' %}
-      {{ (state_attr(door_sensor, 'friendly_name') or door_sensor) }}
-      {{ 'opened' if is_state(door_sensor, 'on') else 'closed' }}.
-    {% elif trigger.id == 'lock_changed' %}
-      {% set s = trigger.to_state.state %}
-      {% set map = {'locked':'locked', 'unlocked':'unlocked', 'locking':'is locking', 'unlocking':'is unlocking', 'jammed':'is jammed'} %}
-      {{ (state_attr(lock_entity, 'friendly_name') or lock_entity) }} {{ map.get(s, s) }}.
-    {% elif trigger.id == 'door_closed' %}
-      {{ (state_attr(door_sensor, 'friendly_name') or door_sensor) }} closed.
-    {% else %}{% endif %}
-
 condition: []
 
 action:
+  - variables:
+      door_entity: !input door_sensor
+      lock_entity: !input lock_entity
+
+      # Friendly names
+      door_name: "{{ state_attr(door_entity, 'friendly_name') or door_entity }}"
+      lock_name: "{{ state_attr(lock_entity, 'friendly_name') or lock_entity }}"
+
+      # Inputs
+      announce_enabled: !input announce_enabled
+      announce_door: !input announce_door
+      announce_lock: !input announce_lock
+      players: !input media_players
+      tts_cache: !input tts_cache
+      tts_voice: !input tts_voice
+      custom_open_msg: !input custom_open_msg
+      custom_closed_msg: !input custom_closed_msg
+      custom_locked_msg: !input custom_locked_msg
+      custom_unlocked_msg: !input custom_unlocked_msg
+      closed_stability: !input closed_stability
+
+      # Build a message for the current trigger
+      tts_message: >-
+        {% if trigger.id == 'door_changed' and announce_door %}
+          {% if is_state(door_entity, 'on') %}
+            {% set base = (custom_open_msg | default('') | trim) %}
+            {{ base.replace('{door}', door_name) if base else door_name ~ ' opened.' }}
+          {% else %}
+            {% set base = (custom_closed_msg | default('') | trim) %}
+            {{ base.replace('{door}', door_name) if base else door_name ~ ' closed.' }}
+          {% endif %}
+        {% elif trigger.id == 'lock_changed' and announce_lock %}
+          {% set s = trigger.to_state.state %}
+          {% if s == 'locked' %}
+            {% set base = (custom_locked_msg | default('') | trim) %}
+            {{ base.replace('{lock}', lock_name) if base else lock_name ~ ' locked.' }}
+          {% elif s == 'unlocked' %}
+            {% set base = (custom_unlocked_msg | default('') | trim) %}
+            {{ base.replace('{lock}', lock_name) if base else lock_name ~ ' unlocked.' }}
+          {% elif s in ['locking','unlocking','jammed'] %}
+            {{ lock_name }} is {{ s }}.
+          {% else %}
+          {% endif %}
+        {% else %}{% endif %}
+
   - choose:
 
-      # --- AUT0LOCK PATH: when door just closed ---
+      # ========== AUTO-LOCK PATH ==========
       - conditions:
           - condition: trigger
             id: door_closed
         sequence:
+          # Wait the primary delay
           - delay:
               seconds: !input lock_delay
 
-          # Re-check: only lock if still closed
+          # Check it's still closed
           - condition: state
             entity_id: !input door_sensor
             state: "off"
+
+          # Optional extra "stability" window to avoid bounce
+          - delay:
+              seconds: !input closed_stability
+
+          # Check again it's still closed
+          - condition: state
+            entity_id: !input door_sensor
+            state: "off"
+
+          # Only lock if not already locked
+          - condition: template
+            value_template: "{{ not is_state(lock_entity, 'locked') }}"
 
           - service: lock.lock
             target:
               entity_id: !input lock_entity
 
-          # Optional queued TTS: announce the lock action completion
+          # Optional: speak that we locked
           - if:
               - condition: template
-                value_template: "{{ tts_enabled and (tts_media_players | length > 0) }}"
+                value_template: >
+                  {{ announce_enabled and (players | length > 0) }}
             then:
               - choose:
-                  - conditions: "{{ tts_queue_script != '' }}"
+                  - conditions: "{{ (tts_voice | default('') | trim) != '' }}"
                     sequence:
-                      - service: script.turn_on
-                        target:
-                          entity_id: !input tts_queue_script
+                      - service: tts.speak
                         data:
-                          message: "{{ (state_attr(lock_entity, 'friendly_name') or lock_entity) }} locked."
-                          media_players: !input tts_media_players
-                          cache: !input tts_cache
+                          message: "{{ (custom_locked_msg | trim) and custom_locked_msg.replace('{lock}', lock_name) or (lock_name ~ ' locked.') }}"
+                          cache: "{{ tts_cache }}"
+                          media_player_entity_id: "{{ players }}"
+                          options:
+                            voice: "{{ tts_voice }}"
                   - conditions: []
                     sequence:
                       - service: tts.speak
                         data:
-                          message: "{{ (state_attr(lock_entity, 'friendly_name') or lock_entity) }} locked."
-                          cache: !input tts_cache
-                          media_player_entity_id: !input tts_media_players
+                          message: "{{ (custom_locked_msg | trim) and custom_locked_msg.replace('{lock}', lock_name) or (lock_name ~ ' locked.') }}"
+                          cache: "{{ tts_cache }}"
+                          media_player_entity_id: "{{ players }}"
 
-    default:
-
-      # --- ANNOUNCEMENT PATH: door_changed or lock_changed ---
-      - if:
+      # ========== ANNOUNCEMENT PATH ==========
+      - conditions:
           - condition: template
-            value_template: "{{ tts_enabled and (tts_media_players | length > 0) and (tts_message | length > 0) and trigger.id in ['door_changed','lock_changed'] }}"
-        then:
+            value_template: >
+              {{ announce_enabled and (players | length > 0) and (tts_message | default('') | trim | length > 0)
+                 and trigger.id in ['door_changed','lock_changed'] }}
+        sequence:
           - choose:
-              - conditions: "{{ tts_queue_script != '' }}"
+              - conditions: "{{ (tts_voice | default('') | trim) != '' }}"
                 sequence:
-                  - service: script.turn_on
-                    target:
-                      entity_id: !input tts_queue_script
+                  - service: tts.speak
                     data:
                       message: "{{ tts_message }}"
-                      media_players: !input tts_media_players
-                      cache: !input tts_cache
+                      cache: "{{ tts_cache }}"
+                      media_player_entity_id: "{{ players }}"
+                      options:
+                        voice: "{{ tts_voice }}"
               - conditions: []
                 sequence:
                   - service: tts.speak
                     data:
                       message: "{{ tts_message }}"
-                      cache: !input tts_cache
-                      media_player_entity_id: !input tts_media_players
+                      cache: "{{ tts_cache }}"
+                      media_player_entity_id: "{{ players }}"
