@@ -160,7 +160,7 @@ action:
       sensor_name: "{{ state_attr(sensor_ent, 'friendly_name') or sensor_ent }}"
       lock_name: "{{ state_attr(lock_ent, 'friendly_name') or lock_ent }}"
 
-      # TTS helpers
+      # Inputs
       players: !input media_players
       tts_engine_ent: !input tts_engine
       tts_voice_name: !input tts_voice
@@ -168,20 +168,29 @@ action:
       announce_enabled: !input announce_enabled
       announce_sensor: !input announce_sensor
       announce_lock: !input announce_lock
+      stability: !input closed_stability
+
+      # Whether we can/should talk
       has_tts: >-
         {{ announce_enabled and (players | length > 0)
            and (tts_engine_ent is string and tts_engine_ent|length > 0) }}
       do_tts_sensor: "{{ has_tts and announce_sensor }}"
       do_tts_lock: "{{ has_tts and announce_lock }}"
       has_voice: "{{ (tts_voice_name | default('') | trim) != '' }}"
-      stability: !input closed_stability
 
-      msg_open: >-
+      # ---------- FINAL messages (use these everywhere) ----------
+      final_opened: >-
         {% set base = (custom_open_msg | default('') | trim) %}
-        {{ base.replace('{door}', sensor_name) if base else sensor_name ~ ' opened.' }}
-      msg_closed: >-
+        {% if base %}{{ base | replace('{door}', sensor_name) }}{% else %}{{ sensor_name ~ ' opened.' }}{% endif %}
+      final_closed: >-
         {% set base = (custom_closed_msg | default('') | trim) %}
-        {{ base.replace('{door}', sensor_name) if base else sensor_name ~ ' closed.' }}
+        {% if base %}{{ base | replace('{door}', sensor_name) }}{% else %}{{ sensor_name ~ ' closed.' }}{% endif %}
+      final_locked: >-
+        {% set base = (custom_locked_msg | default('') | trim) %}
+        {% if base %}{{ base | replace('{lock}', lock_name) }}{% else %}{{ lock_name ~ ' locked.' }}{% endif %}
+      final_unlocked: >-
+        {% set base = (custom_unlocked_msg | default('') | trim) %}
+        {% if base %}{{ base | replace('{lock}', lock_name) }}{% else %}{{ lock_name ~ ' unlocked.' }}{% endif %}
 
   - choose:
 
@@ -201,18 +210,21 @@ action:
                             value_template: "{{ has_voice }}"
                         sequence:
                           - service: tts.speak
-                            target: { entity_id: !input tts_engine }
+                            target:
+                              entity_id: !input tts_engine
                             data:
-                              message: "{{ msg_open }}"
-                              cache: "{{ tts_cache_val }}"
+                              message: "{{ final_opened }}"
+                              cache: !input tts_cache
                               media_player_entity_id: !input media_players
-                              options: { voice: !input tts_voice }
+                              options:
+                                voice: !input tts_voice
                     default:
                       - service: tts.speak
-                        target: { entity_id: !input tts_engine }
+                        target:
+                          entity_id: !input tts_engine
                         data:
-                          message: "{{ msg_open }}"
-                          cache: "{{ tts_cache_val }}"
+                          message: "{{ final_opened }}"
+                          cache: !input tts_cache
                           media_player_entity_id: !input media_players
             default: []
 
@@ -233,18 +245,21 @@ action:
                             value_template: "{{ has_voice }}"
                         sequence:
                           - service: tts.speak
-                            target: { entity_id: !input tts_engine }
+                            target:
+                              entity_id: !input tts_engine
                             data:
-                              message: "{{ msg_closed }}"
-                              cache: "{{ tts_cache_val }}"
+                              message: "{{ final_closed }}"
+                              cache: !input tts_cache
                               media_player_entity_id: !input media_players
-                              options: { voice: !input tts_voice }
+                              options:
+                                voice: !input tts_voice
                     default:
                       - service: tts.speak
-                        target: { entity_id: !input tts_engine }
+                        target:
+                          entity_id: !input tts_engine
                         data:
-                          message: "{{ msg_closed }}"
-                          cache: "{{ tts_cache_val }}"
+                          message: "{{ final_closed }}"
+                          cache: !input tts_cache
                           media_player_entity_id: !input media_players
             default: []
 
@@ -292,12 +307,10 @@ action:
                     default: []
             default: []
 
-          # Final re-check
+          # Final re-check + last-moment guard
           - condition: state
             entity_id: !input door_sensor
             state: "off"
-
-          # FINAL GUARD: catch a last-moment reopen before the lock command
           - wait_for_trigger:
               - platform: state
                 entity_id: !input door_sensor
@@ -308,94 +321,4 @@ action:
           - choose:
               - conditions:
                   - condition: template
-                    value_template: "{{ wait.completed | default(false) }}"
-                sequence:
-                  - stop: "Door reopened at final guard; cancel auto-lock."
-            default: []
-
-          # Only lock if not already locked
-          - condition: template
-            value_template: "{{ not is_state(lock_ent, 'locked') }}"
-
-          - service: lock.lock
-            target: { entity_id: !input lock_entity }
-
-          # Speak lock result (optional)
-          - choose:
-              - conditions:
-                  - condition: template
-                    value_template: "{{ do_tts_lock }}"
-                sequence:
-                  - choose:
-                      - conditions:
-                          - condition: template
-                            value_template: "{{ has_voice }}"
-                        sequence:
-                          - service: tts.speak
-                            target: { entity_id: !input tts_engine }
-                            data:
-                              message: >-
-                                {{ (custom_locked_msg | trim) and custom_locked_msg.replace('{lock}', lock_name) or (lock_name ~ ' locked.') }}
-                              cache: "{{ tts_cache_val }}"
-                              media_player_entity_id: !input media_players
-                              options: { voice: !input tts_voice }
-                    default:
-                      - service: tts.speak
-                        target: { entity_id: !input tts_engine }
-                        data:
-                          message: >-
-                            {{ (custom_locked_msg | trim) and custom_locked_msg.replace('{lock}', lock_name) or (lock_name ~ ' locked.') }}
-                          cache: "{{ tts_cache_val }}"
-                          media_player_entity_id: !input media_players
-            default: []
-
-      # ---------- LOCK CHANGED ----------
-      - conditions:
-          - condition: trigger
-            id: lock_changed
-        sequence:
-          - choose:
-              - conditions:
-                  - condition: template
-                    value_template: "{{ do_tts_lock }}"
-                sequence:
-                  - choose:
-                      - conditions:
-                          - condition: template
-                            value_template: "{{ has_voice }}"
-                        sequence:
-                          - service: tts.speak
-                            target: { entity_id: !input tts_engine }
-                            data:
-                              message: >-
-                                {% set s = trigger.to_state.state %}
-                                {% if s == 'locked' %}
-                                  {% set base = (custom_locked_msg | default('') | trim) %}
-                                  {{ base.replace('{lock}', lock_name) if base else lock_name ~ ' locked.' }}
-                                {% elif s == 'unlocked' %}
-                                  {% set base = (custom_unlocked_msg | default('') | trim) %}
-                                  {{ base.replace('{lock}', lock_name) if base else lock_name ~ ' unlocked.' }}
-                                {% elif s in ['locking','unlocking','jammed'] %}
-                                  {{ lock_name }} is {{ s }}.
-                                {% else %}{% endif %}
-                              cache: "{{ tts_cache_val }}"
-                              media_player_entity_id: !input media_players
-                              options: { voice: !input tts_voice }
-                    default:
-                      - service: tts.speak
-                        target: { entity_id: !input tts_engine }
-                        data:
-                          message: >-
-                            {% set s = trigger.to_state.state %}
-                            {% if s == 'locked' %}
-                              {% set base = (custom_locked_msg | default('') | trim) %}
-                              {{ base.replace('{lock}', lock_name) if base else lock_name ~ ' locked.' }}
-                            {% elif s == 'unlocked' %}
-                              {% set base = (custom_unlocked_msg | default('') | trim) %}
-                              {{ base.replace('{lock}', lock_name) if base else lock_name ~ ' unlocked.' }}
-                            {% elif s in ['locking','unlocking','jammed'] %}
-                              {{ lock_name }} is {{ s }}.
-                            {% else %}{% endif %}
-                          cache: "{{ tts_cache_val }}"
-                          media_player_entity_id: !input media_players
-            default: []
+                    v
