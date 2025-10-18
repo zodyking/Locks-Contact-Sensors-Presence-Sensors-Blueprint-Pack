@@ -129,28 +129,28 @@ blueprint:
           unit_of_measurement: ms
           mode: slider
 
-    # Optional custom messages (still supported; leave blank to use the new room-based defaults)
+    # Optional custom messages (use {room}) – leave blank to use standardized defaults
     custom_open_msg:
       name: Custom message — sensor OPENED (optional)
-      description: Use {room}. Example: "{room} door opened."
+      description: Use {room}. Example: "{room} door was opened."
       default: ""
       selector: { text: {} }
 
     custom_closed_msg:
       name: Custom message — sensor CLOSED (optional)
-      description: Use {room}. Example: "{room} door closed."
+      description: Use {room}. Example: "{room} door was closed."
       default: ""
       selector: { text: {} }
 
     custom_locked_msg:
       name: Custom message — LOCKED (optional)
-      description: Use {room}. Example: "{room} door locked."
+      description: Use {room}. Example: "{room} door was locked."
       default: ""
       selector: { text: {} }
 
     custom_unlocked_msg:
       name: Custom message — UNLOCKED (optional)
-      description: Use {room}. Example: "{room} door unlocked."
+      description: Use {room}. Example: "{room} door was unlocked."
       default: ""
       selector: { text: {} }
 
@@ -179,30 +179,11 @@ action:
       sensor_ent: !input door_sensor
       lock_ent: !input lock_entity
 
-      # Friendly names
-      sensor_name: "{{ state_attr(sensor_ent, 'friendly_name') or sensor_ent }}"
-      lock_name: "{{ state_attr(lock_ent, 'friendly_name') or lock_ent }}"
-
-      # Area/room detection
+      # Areas → room labels (no friendly names used for TTS)
       sensor_area: "{{ area_name(sensor_ent) }}"
       lock_area: "{{ area_name(lock_ent) }}"
-      # Clean room guess from names (fallback if Area isn't set)
-      sensor_room_guess: >-
-        {% set s = (sensor_name or '') %}
-        {% set s = s | regex_replace('(?i)\\b(door|window)\\s*sensor\\b', '') %}
-        {% set s = s | regex_replace('(?i)\\b(contact|sensor|lock)\\b', '') %}
-        {% set s = s | regex_replace('(?i)\\b(door|window)\\b', '') %}
-        {% set s = s | regex_replace('\\s{2,}', ' ') %}
-        {{ s.strip() }}
-      lock_room_guess: >-
-        {% set s = (lock_name or '') %}
-        {% set s = s | regex_replace('(?i)\\b(lock)\\b', '') %}
-        {% set s = s | regex_replace('\\s{2,}', ' ') %}
-        {{ s.strip() }}
-
-      # Final room label we will speak
-      room_for_sensor: "{{ sensor_area or lock_area or sensor_room_guess or lock_room_guess or 'Door' }}"
-      room_for_lock:   "{{ lock_area or sensor_area or lock_room_guess or sensor_room_guess or 'Door' }}"
+      room_for_sensor: "{{ sensor_area or lock_area or 'Door' }}"
+      room_for_lock:   "{{ lock_area or sensor_area or 'Door' }}"
 
       # Inputs (bound so templates can read them)
       players: !input media_players
@@ -228,23 +209,23 @@ action:
       do_tts_lock: "{{ has_tts and announce_lock }}"
       has_voice: "{{ (tts_voice_name | default('') | trim) != '' }}"
 
-      # Final message strings (room-based defaults; customs can use {room})
+      # Final message strings (standardized)
       final_opened: >-
         {% set base = (custom_open_msg_in | default('', true) | trim) %}
         {% if base %}{{ base.replace('{room}', room_for_sensor) }}
-        {% else %}{{ room_for_sensor ~ ' door opened.' }}{% endif %}
+        {% else %}{{ room_for_sensor ~ ' door was opened.' }}{% endif %}
       final_closed: >-
         {% set base = (custom_closed_msg_in | default('', true) | trim) %}
         {% if base %}{{ base.replace('{room}', room_for_sensor) }}
-        {% else %}{{ room_for_sensor ~ ' door closed.' }}{% endif %}
+        {% else %}{{ room_for_sensor ~ ' door was closed.' }}{% endif %}
       final_locked: >-
         {% set base = (custom_locked_msg_in | default('', true) | trim) %}
         {% if base %}{{ base.replace('{room}', room_for_lock) }}
-        {% else %}{{ room_for_lock ~ ' door locked.' }}{% endif %}
+        {% else %}{{ room_for_lock ~ ' door was locked.' }}{% endif %}
       final_unlocked: >-
         {% set base = (custom_unlocked_msg_in | default('', true) | trim) %}
         {% if base %}{{ base.replace('{room}', room_for_lock) }}
-        {% else %}{{ room_for_lock ~ ' door unlocked.' }}{% endif %}
+        {% else %}{{ room_for_lock ~ ' door was unlocked.' }}{% endif %}
 
   - choose:
 
@@ -323,7 +304,6 @@ action:
             timeout:
               seconds: !input lock_delay
             continue_on_timeout: true
-
           - choose:
               - conditions:
                   - condition: template
@@ -384,7 +364,7 @@ action:
           - service: lock.lock
             target: { entity_id: !input lock_entity }
 
-      # ---------- LOCK CHANGED (only locked/unlocked) ----------
+      # ---------- LOCK CHANGED (only locked/unlocked, with confirmation) ----------
       - conditions:
           - condition: trigger
             id: lock_changed
@@ -392,9 +372,14 @@ action:
           - choose:
               - conditions:
                   - condition: template
-                    value_template: >
-                      {{ do_tts_lock and trigger.to_state.state in ['locked','unlocked'] }}
+                    value_template: "{{ do_tts_lock and trigger.to_state.state in ['locked','unlocked'] }}"
                 sequence:
+                  # Confirm the state really stuck before speaking (avoid false positives)
+                  - delay:
+                      milliseconds: 150
+                  - condition: state
+                    entity_id: !input lock_entity
+                    state: "{{ trigger.to_state.state }}"
                   - delay:
                       milliseconds: "{{ tts_preroll_ms | int }}"
                   - choose:
