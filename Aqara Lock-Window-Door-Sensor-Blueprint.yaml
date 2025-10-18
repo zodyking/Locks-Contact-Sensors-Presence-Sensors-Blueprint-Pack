@@ -1,60 +1,185 @@
 blueprint:
-  name: Queued TTS Announcer
-  description: "Speaks messages via tts.speak to one or more media players, in order. Use this from any automation. Messages queue; no overlaps."
-  domain: script
-  source_url: https://example.com/blueprints/zody/queued_tts.yaml
+  name: Aqara Door Auto-Lock + TTS (Queued)
+  description: >
+    Auto-lock an Aqara (or any) lock X seconds after the door sensor reports closed
+    (re-checks before locking). Optional TTS announcements for ALL state changes of
+    the door sensor and the lock. If you select the queued TTS script created from
+    the companion script blueprint, announcements are queued (no overlaps).
+  domain: automation
+  source_url: https://example.com/blueprints/zody/aqara_autolock_tts.yaml
 
-fields:
-  message:
-    name: Message
-    description: "What to say."
-    required: true
-    selector:
-      text: {}
+  input:
+    door_sensor:
+      name: Door contact sensor
+      description: "Use a binary_sensor with device_class 'door'/'opening' (Aqara contact sensor). OFF = closed, ON = open."
+      selector:
+        entity:
+          domain: binary_sensor
+          device_class:
+            - door
+            - opening
+            - window
 
-  media_players:
-    name: Media players
-    description: "One or more media_player entities."
-    required: true
-    selector:
-      entity:
-        domain: media_player
-        multiple: true
+    lock_entity:
+      name: Door lock
+      description: "Your Aqara (or any) lock entity."
+      selector:
+        entity:
+          domain: lock
 
-  cache:
-    name: Cache TTS audio
-    description: "If true, Home Assistant may cache synthesized speech."
-    required: false
-    default: false
-    selector:
-      boolean: {}
+    lock_delay:
+      name: Delay before auto-lock (seconds)
+      description: "How long after the door closes to attempt locking."
+      default: 10
+      selector:
+        number:
+          min: 0
+          max: 1200
+          unit_of_measurement: seconds
+          mode: slider
 
-  voice:
-    name: Voice (optional)
-    description: "If your TTS provider supports a voice option (tts.speak -> options.voice). Leave blank to use default."
-    required: false
-    default: ""
-    selector:
-      text: {}
+    tts_enabled:
+      name: Enable TTS announcements
+      description: "If enabled, announces all door/lock state changes."
+      default: false
+      selector:
+        boolean: {}
 
-sequence:
+    tts_media_players:
+      name: TTS media players
+      description: "One or more media_player entities for announcements (used only if TTS is enabled)."
+      default: []
+      selector:
+        entity:
+          domain: media_player
+          multiple: true
+
+    tts_queue_script:
+      name: (Optional) Queued TTS script entity
+      description: "Select the script created from the 'Queued TTS Announcer' blueprint to ensure messages are queued."
+      default: ""
+      selector:
+        entity:
+          domain: script
+
+    tts_cache:
+      name: Cache TTS audio
+      default: false
+      selector:
+        boolean: {}
+
+mode: parallel
+max: 10
+
+variables:
+  door_sensor: !input door_sensor
+  lock_entity: !input lock_entity
+  door_name: "{{ state_attr(door_sensor, 'friendly_name') or door_sensor }}"
+  lock_name: "{{ state_attr(lock_entity, 'friendly_name') or lock_entity }}"
+  tts_enabled: !input tts_enabled
+  tts_media_players: !input tts_media_players
+  tts_cache: !input tts_cache
+  tts_queue_script: !input tts_queue_script
+
+trigger:
+  # (1) Fire when the door becomes CLOSED (used for autolock)
+  - id: door_closed
+    platform: state
+    entity_id: !input door_sensor
+    to: "off"
+
+  # (2) Fire on ANY door state change (for announcements)
+  - id: door_changed
+    platform: state
+    entity_id: !input door_sensor
+
+  # (3) Fire on ANY lock state change (for announcements)
+  - id: lock_changed
+    platform: state
+    entity_id: !input lock_entity
+
+# We'll generate a readable message for door/lock changes
+# Note: For Aqara/ZHA/Z2M contacts, ON = open, OFF = closed.
+# Lock states include: locked, unlocked, locking, unlocking, jammed (vendor/platform dependent).
+variables:
+  tts_message: >-
+    {% if trigger.id == 'door_changed' %}
+      {{ (state_attr(door_sensor, 'friendly_name') or door_sensor) }}
+      {{ 'opened' if is_state(door_sensor, 'on') else 'closed' }}.
+    {% elif trigger.id == 'lock_changed' %}
+      {% set s = trigger.to_state.state %}
+      {% set map = {'locked':'locked', 'unlocked':'unlocked', 'locking':'is locking', 'unlocking':'is unlocking', 'jammed':'is jammed'} %}
+      {{ (state_attr(lock_entity, 'friendly_name') or lock_entity) }} {{ map.get(s, s) }}.
+    {% elif trigger.id == 'door_closed' %}
+      {{ (state_attr(door_sensor, 'friendly_name') or door_sensor) }} closed.
+    {% else %}{% endif %}
+
+condition: []
+
+action:
   - choose:
-      - conditions: "{{ (voice | default('')) | length > 0 }}"
-        sequence:
-          - service: tts.speak
-            data:
-              message: "{{ message }}"
-              cache: "{{ cache | default(false) }}"
-              media_player_entity_id: "{{ media_players }}"
-              options:
-                voice: "{{ voice }}"
-      - conditions: []
-        sequence:
-          - service: tts.speak
-            data:
-              message: "{{ message }}"
-              cache: "{{ cache | default(false) }}"
-              media_player_entity_id: "{{ media_players }}"
 
-mode: queued
-max: 50
+      # --- AUT0LOCK PATH: when door just closed ---
+      - conditions:
+          - condition: trigger
+            id: door_closed
+        sequence:
+          - delay:
+              seconds: !input lock_delay
+
+          # Re-check: only lock if still closed
+          - condition: state
+            entity_id: !input door_sensor
+            state: "off"
+
+          - service: lock.lock
+            target:
+              entity_id: !input lock_entity
+
+          # Optional queued TTS: announce the lock action completion
+          - if:
+              - condition: template
+                value_template: "{{ tts_enabled and (tts_media_players | length > 0) }}"
+            then:
+              - choose:
+                  - conditions: "{{ tts_queue_script != '' }}"
+                    sequence:
+                      - service: script.turn_on
+                        target:
+                          entity_id: !input tts_queue_script
+                        data:
+                          message: "{{ (state_attr(lock_entity, 'friendly_name') or lock_entity) }} locked."
+                          media_players: !input tts_media_players
+                          cache: !input tts_cache
+                  - conditions: []
+                    sequence:
+                      - service: tts.speak
+                        data:
+                          message: "{{ (state_attr(lock_entity, 'friendly_name') or lock_entity) }} locked."
+                          cache: !input tts_cache
+                          media_player_entity_id: !input tts_media_players
+
+    default:
+
+      # --- ANNOUNCEMENT PATH: door_changed or lock_changed ---
+      - if:
+          - condition: template
+            value_template: "{{ tts_enabled and (tts_media_players | length > 0) and (tts_message | length > 0) and trigger.id in ['door_changed','lock_changed'] }}"
+        then:
+          - choose:
+              - conditions: "{{ tts_queue_script != '' }}"
+                sequence:
+                  - service: script.turn_on
+                    target:
+                      entity_id: !input tts_queue_script
+                    data:
+                      message: "{{ tts_message }}"
+                      media_players: !input tts_media_players
+                      cache: !input tts_cache
+              - conditions: []
+                sequence:
+                  - service: tts.speak
+                    data:
+                      message: "{{ tts_message }}"
+                      cache: !input tts_cache
+                      media_player_entity_id: !input tts_media_players
