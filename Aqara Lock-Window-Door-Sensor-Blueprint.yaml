@@ -75,6 +75,15 @@ blueprint:
       selector:
         boolean: {}
 
+    tts_engine:
+      name: TTS engine
+      description: >
+        Choose the TTS engine entity (e.g., `tts.piper`, `tts.cloud`, `tts.google_cloud`).
+        Required if announcements are enabled.
+      selector:
+        entity:
+          domain: tts
+
     media_players:
       name: Speakers for TTS
       description: "One or more media_player entities to speak on (used only if announcements are enabled)."
@@ -94,7 +103,7 @@ blueprint:
     tts_voice:
       name: Voice name (optional)
       description: >
-        If your TTS provider supports a voice option (tts.speak -> options.voice), put it here.
+        If your TTS provider supports a voice option (tts.speak → options.voice), put it here.
         Leave blank to use the provider's default voice.
       default: ""
       selector:
@@ -153,24 +162,23 @@ condition: []
 action:
   - variables:
       sensor_entity: !input door_sensor
-      lock_entity: !input lock_entity
+      lock_ent: !input lock_entity
 
       # Friendly names
       sensor_name: "{{ state_attr(sensor_entity, 'friendly_name') or sensor_entity }}"
-      lock_name: "{{ state_attr(lock_entity, 'friendly_name') or lock_entity }}"
+      lock_name: "{{ state_attr(lock_ent, 'friendly_name') or lock_ent }}"
 
-      # Inputs
+      # Inputs for templates/conditions
       announce_enabled: !input announce_enabled
       announce_sensor: !input announce_sensor
       announce_lock: !input announce_lock
       players: !input media_players
-      tts_cache: !input tts_cache
-      tts_voice: !input tts_voice
+      tts_engine_ent: !input tts_engine
+      tts_voice_name: !input tts_voice
       custom_open_msg: !input custom_open_msg
       custom_closed_msg: !input custom_closed_msg
       custom_locked_msg: !input custom_locked_msg
       custom_unlocked_msg: !input custom_unlocked_msg
-      closed_stability: !input closed_stability
 
       # Build a message for the current trigger
       tts_message: >-
@@ -223,7 +231,7 @@ action:
 
           # Only lock if not already locked
           - condition: template
-            value_template: "{{ not is_state(lock_entity, 'locked') }}"
+            value_template: "{{ not is_state(lock_ent, 'locked') }}"
 
           - service: lock.lock
             target:
@@ -233,47 +241,58 @@ action:
           - if:
               - condition: template
                 value_template: >
-                  {{ announce_enabled and (players | length > 0) }}
+                  {{ announce_enabled and (players | length > 0) and (tts_engine_ent is string and tts_engine_ent|length > 0) }}
             then:
               - choose:
-                  - conditions: "{{ (tts_voice | default('') | trim) != '' }}"
+                  - conditions: "{{ (tts_voice_name | default('') | trim) != '' }}"
                     sequence:
                       - service: tts.speak
+                        target:
+                          entity_id: !input tts_engine
                         data:
-                          message: "{{ (custom_locked_msg | trim) and custom_locked_msg.replace('{lock}', lock_name) or (lock_name ~ ' locked.') }}"
-                          cache: "{{ tts_cache }}"
-                          media_player_entity_id: "{{ players }}"
+                          message: >-
+                            {{ (custom_locked_msg | trim) and custom_locked_msg.replace('{lock}', lock_name) or (lock_name ~ ' locked.') }}
+                          cache: !input tts_cache
+                          media_player_entity_id: !input media_players
                           options:
-                            voice: "{{ tts_voice }}"
+                            voice: !input tts_voice
                   - conditions: []
                     sequence:
                       - service: tts.speak
+                        target:
+                          entity_id: !input tts_engine
                         data:
-                          message: "{{ (custom_locked_msg | trim) and custom_locked_msg.replace('{lock}', lock_name) or (lock_name ~ ' locked.') }}"
-                          cache: "{{ tts_cache }}"
-                          media_player_entity_id: "{{ players }}"
+                          message: >-
+                            {{ (custom_locked_msg | trim) and custom_locked_msg.replace('{lock}', lock_name) or (lock_name ~ ' locked.') }}
+                          cache: !input tts_cache
+                          media_player_entity_id: !input media_players
 
       # ========== ANNOUNCEMENT PATH ==========
       - conditions:
           - condition: template
             value_template: >
               {{ announce_enabled and (players | length > 0) and (tts_message | default('') | trim | length > 0)
+                 and (tts_engine_ent is string and tts_engine_ent|length > 0)
                  and trigger.id in ['sensor_changed','lock_changed'] }}
         sequence:
           - choose:
-              - conditions: "{{ (tts_voice | default('') | trim) != '' }}"
+              - conditions: "{{ (tts_voice_name | default('') | trim) != '' }}"
                 sequence:
                   - service: tts.speak
+                    target:
+                      entity_id: !input tts_engine
                     data:
                       message: "{{ tts_message }}"
-                      cache: "{{ tts_cache }}"
-                      media_player_entity_id: "{{ players }}"
+                      cache: !input tts_cache
+                      media_player_entity_id: !input media_players
                       options:
-                        voice: "{{ tts_voice }}"
+                        voice: !input tts_voice
               - conditions: []
                 sequence:
                   - service: tts.speak
+                    target:
+                      entity_id: !input tts_engine
                     data:
                       message: "{{ tts_message }}"
-                      cache: "{{ tts_cache }}"
-                      media_player_entity_id: "{{ players }}"
+                      cache: !input tts_cache
+                      media_player_entity_id: !input media_players
