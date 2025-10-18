@@ -135,9 +135,9 @@ blueprint:
         boolean: {}
 
     tts_voice:
-      name: Voice name (optional)
+      name: Voice name (optional; used only by engines that support it)
       description: |-
-        If supported by your TTS provider (options.voice). Leave blank to use the default voice.
+        If supported by your TTS provider (e.g., Piper, Edge TTS, Polly). Leave blank to use that engine’s default.
       default: ""
       selector:
         text: {}
@@ -226,7 +226,13 @@ action:
       can_notify: >-
         {{ notify_enabled and (notify_devices | length) > 0 }}
 
-      # Messages (always non-empty strings)
+      # Engines that accept "options.voice" in tts.speak:
+      tts_supports_voice: >-
+        {{ (tts_engine_ent | string) | regex_search('tts\\.(piper|edge_tts|coqui|microsoft|amazon_polly|polly|elevenlabs|openai)', ignorecase=True) }}
+      tts_voice_set: "{{ (tts_voice_name | default('') | trim) != '' }}"
+      use_voice_option: "{{ tts_supports_voice and tts_voice_set }}"
+
+      # Messages
       msg_detected: "{{ 'Presence detected in ' ~ subject_presence ~ '.' }}"
       msg_cleared: "{{ subject_presence ~ ' cleared.' }}"
 
@@ -270,7 +276,7 @@ action:
                       entity_id: !input on_entities
             default: []
 
-          # TTS: presence detected (speak after action, with short pre-roll)
+          # TTS: presence detected (omit voice option for engines that don't support it)
           - choose:
               - conditions:
                   - condition: template
@@ -278,15 +284,28 @@ action:
                 sequence:
                   - delay:
                       milliseconds: "{{ tts_preroll_ms | int }}"
-                  - service: tts.speak
-                    target:
-                      entity_id: !input tts_engine
-                    data:
-                      message: "{{ msg_detected }}"
-                      cache: "{{ tts_cache_val }}"
-                      media_player_entity_id: !input media_players
-                      options:
-                        voice: "{{ tts_voice_name | default('') }}"
+                  - choose:
+                      - conditions:
+                          - condition: template
+                            value_template: "{{ use_voice_option }}"
+                        sequence:
+                          - service: tts.speak
+                            target:
+                              entity_id: !input tts_engine
+                            data:
+                              message: "{{ msg_detected }}"
+                              cache: "{{ tts_cache_val }}"
+                              media_player_entity_id: !input media_players
+                              options:
+                                voice: "{{ tts_voice_name }}"
+                    default:
+                      - service: tts.speak
+                        target:
+                          entity_id: !input tts_engine
+                        data:
+                          message: "{{ msg_detected }}"
+                          cache: "{{ tts_cache_val }}"
+                          media_player_entity_id: !input media_players
             default: []
 
           # Notify: presence detected (send to each selected Companion App device)
@@ -298,78 +317,18 @@ action:
                   - repeat:
                       for_each: "{{ notify_devices }}"
                       sequence:
+                        # Primary: per-device mobile_app notify service
                         - service: "{{ 'notify.mobile_app_' ~ (device_attr(repeat.item, 'name') | string | lower | regex_replace('[^a-z0-9]+','_')) }}"
                           data:
                             message: "{{ msg_detected }}"
+                        # Fallback: generic notify with device_id target (some setups support this)
+                        - service: notify.notify
+                          data:
+                            message: "{{ msg_detected }}"
+                            target:
+                              - device_id: "{{ repeat.item }}"
             default: []
 
       # ===== PRESENCE CLEARED =====
       - conditions:
-          - condition: trigger
-            id: presence_off
-        sequence:
-          # Hold (only if > 0). Faster path when 0.
-          - choose:
-              - conditions:
-                  - condition: template
-                    value_template: "{{ (off_hold | int) > 0 }}"
-                sequence:
-                  - wait_for_trigger:
-                      - platform: state
-                        entity_id: !input presence_sensor
-                        to: "on"
-                    timeout:
-                      seconds: !input off_hold_secs
-                    continue_on_timeout: true
-                  - choose:
-                      - conditions:
-                          - condition: template
-                            value_template: "{{ wait and wait.completed | default(false) }}"
-                        sequence:
-                          - stop: "Presence returned before OFF hold elapsed; abort OFF actions."
-                    default: []
-            default: []
-
-          # Turn OFF immediately when allowed (fast path)
-          - choose:
-              - conditions:
-                  - condition: template
-                    value_template: "{{ (off_entities | length) > 0 }}"
-                sequence:
-                  - service: homeassistant.turn_off
-                    target:
-                      entity_id: !input off_entities
-            default: []
-
-          # TTS: presence cleared (speak after action, with short pre-roll)
-          - choose:
-              - conditions:
-                  - condition: template
-                    value_template: "{{ has_tts }}"
-                sequence:
-                  - delay:
-                      milliseconds: "{{ tts_preroll_ms | int }}"
-                  - service: tts.speak
-                    target:
-                      entity_id: !input tts_engine
-                    data:
-                      message: "{{ msg_cleared }}"
-                      cache: "{{ tts_cache_val }}"
-                      media_player_entity_id: !input media_players
-                      options:
-                        voice: "{{ tts_voice_name | default('') }}"
-            default: []
-
-          # Notify: presence cleared (send to each selected Companion App device)
-          - choose:
-              - conditions:
-                  - condition: template
-                    value_template: "{{ can_notify }}"
-                sequence:
-                  - repeat:
-                      for_each: "{{ notify_devices }}"
-                      sequence:
-                        - service: "{{ 'notify.mobile_app_' ~ (device_attr(repeat.item, 'name') | string | lower | regex_replace('[^a-z0-9]+','_')) }}"
-                          data:
-                            message: "{{ msg_cleared }}"
-            default: []
+          - condition: t
