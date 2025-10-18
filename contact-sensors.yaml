@@ -1,5 +1,5 @@
 blueprint:
-  name: Aqara Sensor Announce (Door/Window, Queued)
+  name: Aqara Sensor Announce Contact Sensors, Queued)
   description: |-
     ![Aqara](https://www.allthethings.best/wp-content/uploads/2025/05/Aqara-logo-scaled.jpg)
 
