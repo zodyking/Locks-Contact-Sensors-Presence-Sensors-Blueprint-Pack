@@ -1,20 +1,29 @@
 blueprint:
-  name: Aqara Door/Window Auto-Lock + Announce (Queued)
+  name: Aqara Door/Window Auto-Lock + Announce (Queued, Sensor-only or Lock-only)
   description: |-
     ![Aqara](https://www.allthethings.best/wp-content/uploads/2025/05/Aqara-logo-scaled.jpg)
 
-    Auto-lock a smart lock X seconds after the contact sensor reports CLOSED (re-checks before locking).
-    Optional TTS announcements for all state changes of the contact sensor (door/window) and the lock.
-    Messages queue (no overlap) because this automation runs in mode: queued.
+    Use this ONE blueprint for:
+      • Sensor-only announcements (OPENED/CLOSED)
+      • Lock-only announcements (LOCKED/UNLOCKED)
+      • Both together with guarded auto-lock
+
+    How it works
+      • If a contact sensor is provided and reports CLOSED, we speak immediately,
+        then wait X seconds; auto-lock runs only if it never re-opens (two guards + final re-check).
+      • Lock announcements trigger only for LOCKED/UNLOCKED (transitional states are ignored).
+      • Messages queue (no overlap) because the automation runs in `mode: queued`.
+
   domain: automation
 
   input:
     door_sensor:
-      name: Contact sensor (door/window)
+      name: Contact sensor (door/window) — optional
       description: |-
-        Pick the contact sensor for THIS door or window.
+        Leave blank if you don't want sensor features.
         For most Aqara sensors, ON = open and OFF = closed.
         Device class should be door, opening, or window.
+      default: ""
       selector:
         entity:
           domain: binary_sensor
@@ -24,9 +33,11 @@ blueprint:
             - window
 
     lock_entity:
-      name: Smart lock
+      name: Smart lock — optional
       description: |-
-        Pick the lock entity to control (Aqara or any lock.*).
+        Leave blank if you don't want lock features.
+        Works with Aqara or any `lock.*`.
+      default: ""
       selector:
         entity:
           domain: lock
@@ -46,7 +57,7 @@ blueprint:
     closed_stability:
       name: Closed stability window (seconds)
       description: |-
-        Extra time the sensor must remain closed (no bounce) before locking.
+        Extra time the sensor must remain CLOSED (no bounce) before locking.
         Set to 0 to skip. After the main delay we wait this long and re-check closed.
       default: 0
       selector:
@@ -59,7 +70,7 @@ blueprint:
     announce_enabled:
       name: Speak announcements
       description: |-
-        Turn on to speak every contact/lock state change.
+        Turn on to speak contact/lock state changes (requires TTS engine + speakers).
       default: false
       selector:
         boolean: {}
@@ -75,7 +86,7 @@ blueprint:
     announce_lock:
       name: Announce lock state changes
       description: |-
-        If on, we announce locked/unlocked (transitional states are ignored).
+        If on, we announce LOCKED/UNLOCKED only (transitional states are ignored).
       default: true
       selector:
         boolean: {}
@@ -83,7 +94,8 @@ blueprint:
     tts_engine:
       name: TTS engine
       description: |-
-        Pick your TTS engine entity (e.g., tts.piper). Required if announcements are enabled.
+        Pick your TTS engine entity (e.g., `tts.piper`). Required if announcements are enabled.
+      default: ""
       selector:
         entity:
           domain: tts
@@ -91,7 +103,7 @@ blueprint:
     media_players:
       name: Speakers for TTS
       description: |-
-        One or more media_player entities to speak on (used only if announcements are enabled).
+        One or more `media_player.*` entities to speak on (used only if announcements are enabled).
       default: []
       selector:
         entity:
@@ -109,7 +121,7 @@ blueprint:
     tts_voice:
       name: Voice name (optional)
       description: |-
-        If supported by your TTS provider (options.voice). Leave blank for default.
+        If supported by your TTS provider (`options.voice`). Leave blank for default.
       default: ""
       selector:
         text: {}
@@ -149,20 +161,10 @@ blueprint:
 mode: queued
 max: 50
 
+# One lightweight global trigger; we filter events inside actions.
 trigger:
-  - id: sensor_opened
-    platform: state
-    entity_id: !input door_sensor
-    to: "on"
-
-  - id: sensor_closed
-    platform: state
-    entity_id: !input door_sensor
-    to: "off"
-
-  - id: lock_changed
-    platform: state
-    entity_id: !input lock_entity
+  - platform: event
+    event_type: state_changed
 
 condition: []
 
@@ -171,49 +173,50 @@ action:
       sensor_ent: !input door_sensor
       lock_ent: !input lock_entity
 
-      # Friendly names
+      # Are inputs set?
+      sensor_set: "{{ sensor_ent is string and (sensor_ent|length) > 0 }}"
+      lock_set: "{{ lock_ent is string and (lock_ent|length) > 0 }}"
+
+      # Friendly names (resolve lazily at runtime)
       sensor_name: "{{ state_attr(sensor_ent, 'friendly_name') or sensor_ent }}"
       lock_name: "{{ state_attr(lock_ent, 'friendly_name') or lock_ent }}"
 
-      # Inputs (bound so templates can read them)
+      # TTS plumbing
       players: !input media_players
       tts_engine_ent: !input tts_engine
       tts_voice_name: !input tts_voice
+      has_voice: "{{ (tts_voice_name | default('') | trim) != '' }}"
       announce_enabled: !input announce_enabled
       announce_sensor: !input announce_sensor
       announce_lock: !input announce_lock
+      has_tts: >-
+        {{ announce_enabled and (players | length > 0)
+           and (tts_engine_ent is string and tts_engine_ent|length > 0) }}
+      do_tts_sensor: "{{ has_tts and announce_sensor and sensor_set }}"
+      do_tts_lock: "{{ has_tts and announce_lock and lock_set }}"
+
+      # Timing
       stability: !input closed_stability
 
-      # Custom message inputs (explicitly bound)
+      # Bind custom messages
       custom_open_msg_in: !input custom_open_msg
       custom_closed_msg_in: !input custom_closed_msg
       custom_locked_msg_in: !input custom_locked_msg
       custom_unlocked_msg_in: !input custom_unlocked_msg
 
-      # Can/should we speak?
-      has_tts: >-
-        {{ announce_enabled and (players | length > 0)
-           and (tts_engine_ent is string and tts_engine_ent|length > 0) }}
-      do_tts_sensor: "{{ has_tts and announce_sensor }}"
-      do_tts_lock: "{{ has_tts and announce_lock }}"
-      has_voice: "{{ (tts_voice_name | default('') | trim) != '' }}"
-
-      # Final message strings (used everywhere)
+      # Final message strings
       final_opened: >-
         {% set base = (custom_open_msg_in | default('', true) | trim) %}
         {% if base %}{{ base.replace('{door}', sensor_name).replace('{sensor}', sensor_name) }}
         {% else %}{{ sensor_name ~ ' opened.' }}{% endif %}
-
       final_closed: >-
         {% set base = (custom_closed_msg_in | default('', true) | trim) %}
         {% if base %}{{ base.replace('{door}', sensor_name).replace('{sensor}', sensor_name) }}
         {% else %}{{ sensor_name ~ ' closed.' }}{% endif %}
-
       final_locked: >-
         {% set base = (custom_locked_msg_in | default('', true) | trim) %}
         {% if base %}{{ base.replace('{lock}', lock_name) }}
         {% else %}{{ lock_name ~ ' locked.' }}{% endif %}
-
       final_unlocked: >-
         {% set base = (custom_unlocked_msg_in | default('', true) | trim) %}
         {% if base %}{{ base.replace('{lock}', lock_name) }}
@@ -221,15 +224,23 @@ action:
 
   - choose:
 
-      # ---------- SENSOR OPENED ----------
+      # ===== SENSOR EVENTS (OPEN/CLOSE) =====
       - conditions:
-          - condition: trigger
-            id: sensor_opened
+          - condition: template
+            value_template: >-
+              {{ sensor_set
+                 and trigger.event.data is mapping
+                 and trigger.event.data.entity_id == sensor_ent }}
         sequence:
+
+          # Speak OPENED immediately
           - choose:
               - conditions:
                   - condition: template
-                    value_template: "{{ do_tts_sensor }}"
+                    value_template: >-
+                      {{ do_tts_sensor
+                         and trigger.event.data.new_state is mapping
+                         and trigger.event.data.new_state.state == 'on' }}
                 sequence:
                   - choose:
                       - conditions:
@@ -252,111 +263,127 @@ action:
                           media_player_entity_id: !input media_players
             default: []
 
-      # ---------- SENSOR CLOSED (speak first, then fully guarded auto-lock) ----------
-      - conditions:
-          - condition: trigger
-            id: sensor_closed
-        sequence:
-          # Speak CLOSED immediately
+          # Speak CLOSED immediately, then guarded auto-lock flow
           - choose:
               - conditions:
                   - condition: template
-                    value_template: "{{ do_tts_sensor }}"
+                    value_template: >-
+                      {{ trigger.event.data.new_state is mapping
+                         and trigger.event.data.new_state.state == 'off' }}
                 sequence:
+                  # TTS for CLOSED (if enabled)
                   - choose:
                       - conditions:
                           - condition: template
-                            value_template: "{{ has_voice }}"
+                            value_template: "{{ do_tts_sensor }}"
                         sequence:
-                          - service: tts.speak
-                            target: { entity_id: !input tts_engine }
-                            data:
-                              message: "{{ final_closed }}"
-                              cache: !input tts_cache
-                              media_player_entity_id: !input media_players
-                              options: { voice: !input tts_voice }
-                    default:
-                      - service: tts.speak
-                        target: { entity_id: !input tts_engine }
-                        data:
-                          message: "{{ final_closed }}"
-                          cache: !input tts_cache
-                          media_player_entity_id: !input media_players
-            default: []
-
-          # Guard 1: wait lock_delay unless sensor OPENS -> cancel
-          - wait_for_trigger:
-              - platform: state
-                entity_id: !input door_sensor
-                to: "on"
-            timeout:
-              seconds: !input lock_delay
-            continue_on_timeout: true
-
-          - choose:
-              - conditions:
-                  - condition: template
-                    value_template: "{{ wait.completed | default(false) }}"
-                sequence:
-                  - stop: "Door reopened during delay; cancel auto-lock."
-            default: []
-
-          # Confirm still closed
-          - condition: state
-            entity_id: !input door_sensor
-            state: "off"
-
-          # Guard 2: optional stability window; cancel if opens
-          - choose:
-              - conditions:
-                  - condition: template
-                    value_template: "{{ (stability | int) > 0 }}"
-                sequence:
-                  - wait_for_trigger:
-                      - platform: state
-                        entity_id: !input door_sensor
-                        to: "on"
-                    timeout:
-                      seconds: !input closed_stability
-                    continue_on_timeout: true
-                  - choose:
-                      - conditions:
-                          - condition: template
-                            value_template: "{{ wait.completed | default(false) }}"
-                        sequence:
-                          - stop: "Door reopened during stability; cancel auto-lock."
+                          - choose:
+                              - conditions:
+                                  - condition: template
+                                    value_template: "{{ has_voice }}"
+                                sequence:
+                                  - service: tts.speak
+                                    target: { entity_id: !input tts_engine }
+                                    data:
+                                      message: "{{ final_closed }}"
+                                      cache: !input tts_cache
+                                      media_player_entity_id: !input media_players
+                                      options: { voice: !input tts_voice }
+                            default:
+                              - service: tts.speak
+                                target: { entity_id: !input tts_engine }
+                                data:
+                                  message: "{{ final_closed }}"
+                                  cache: !input tts_cache
+                                  media_player_entity_id: !input media_players
                     default: []
-            default: []
 
-          # Final re-check + last-moment guard
-          - condition: state
-            entity_id: !input door_sensor
-            state: "off"
+                  # Only attempt auto-lock if a lock is configured
+                  - choose:
+                      - conditions:
+                          - condition: template
+                            value_template: "{{ lock_set }}"
+                        sequence:
 
-          - wait_for_trigger:
-              - platform: state
-                entity_id: !input door_sensor
-                to: "on"
-            timeout:
-              seconds: 1
-            continue_on_timeout: true
+                          # Guard 1: wait `lock_delay` unless sensor OPENS → cancel
+                          - wait_for_trigger:
+                              - platform: state
+                                entity_id: !input door_sensor
+                                to: "on"
+                            timeout:
+                              seconds: !input lock_delay
+                            continue_on_timeout: true
+                          - choose:
+                              - conditions:
+                                  - condition: template
+                                    value_template: "{{ wait.completed | default(false) }}"
+                                sequence:
+                                  - stop: "Door reopened during delay; cancel auto-lock."
+                            default: []
 
-          - choose:
-              - conditions:
-                  - condition: template
-                    value_template: "{{ wait.completed | default(false) }}"
-                sequence:
-                  - stop: "Door reopened at final guard; cancel auto-lock."
-            default: []
+                          # Confirm still CLOSED
+                          - condition: state
+                            entity_id: !input door_sensor
+                            state: "off"
 
-          # Only lock if not already locked
+                          # Guard 2: optional stability window; cancel if opens
+                          - choose:
+                              - conditions:
+                                  - condition: template
+                                    value_template: "{{ (stability | int) > 0 }}"
+                                sequence:
+                                  - wait_for_trigger:
+                                      - platform: state
+                                        entity_id: !input door_sensor
+                                        to: "on"
+                                    timeout:
+                                      seconds: !input closed_stability
+                                    continue_on_timeout: true
+                                  - choose:
+                                      - conditions:
+                                          - condition: template
+                                            value_template: "{{ wait.completed | default(false) }}"
+                                        sequence:
+                                          - stop: "Door reopened during stability; cancel auto-lock."
+                                    default: []
+                            default: []
+
+                          # Final re-check + last-moment guard
+                          - condition: state
+                            entity_id: !input door_sensor
+                            state: "off"
+                          - wait_for_trigger:
+                              - platform: state
+                                entity_id: !input door_sensor
+                                to: "on"
+                            timeout:
+                              seconds: 1
+                            continue_on_timeout: true
+                          - choose:
+                              - conditions:
+                                  - condition: template
+                                    value_template: "{{ wait.completed | default(false) }}"
+                                sequence:
+                                  - stop: "Door reopened at final guard; cancel auto-lock."
+                            default: []
+
+                          # Only lock if not already locked
+                          - condition: template
+                            value_template: "{{ not is_state(lock_ent, 'locked') }}"
+                          - service: lock.lock
+                            target: { entity_id: !input lock_entity }
+                    default: []
+
+      # ===== LOCK EVENTS (LOCKED/UNLOCKED only) =====
+      - conditions:
           - condition: template
-            value_template: "{{ not is_state(lock_ent, 'locked') }}"
-
-          - service: lock.lock
-            target: { entity_id: !input lock_entity }
-
-          # Speak lock result (optional)
+            value_template: >-
+              {{ lock_set
+                 and trigger.event.data is mapping
+                 and trigger.event.data.entity_id == lock_ent
+                 and trigger.event.data.new_state is mapping
+                 and trigger.event.data.new_state.state in ['locked','unlocked'] }}
+        sequence:
           - choose:
               - conditions:
                   - condition: template
@@ -370,40 +397,8 @@ action:
                           - service: tts.speak
                             target: { entity_id: !input tts_engine }
                             data:
-                              message: "{{ final_locked }}"
-                              cache: !input tts_cache
-                              media_player_entity_id: !input media_players
-                              options: { voice: !input tts_voice }
-                    default:
-                      - service: tts.speak
-                        target: { entity_id: !input tts_engine }
-                        data:
-                          message: "{{ final_locked }}"
-                          cache: !input tts_cache
-                          media_player_entity_id: !input media_players
-            default: []
-
-      # ---------- LOCK CHANGED (only locked/unlocked) ----------
-      - conditions:
-          - condition: trigger
-            id: lock_changed
-        sequence:
-          - choose:
-              - conditions:
-                  - condition: template
-                    value_template: >
-                      {{ do_tts_lock and trigger.to_state.state in ['locked','unlocked'] }}
-                sequence:
-                  - choose:
-                      - conditions:
-                          - condition: template
-                            value_template: "{{ has_voice }}"
-                        sequence:
-                          - service: tts.speak
-                            target: { entity_id: !input tts_engine }
-                            data:
                               message: >-
-                                {% if trigger.to_state.state == 'locked' %}
+                                {% if trigger.event.data.new_state.state == 'locked' %}
                                   {{ final_locked }}
                                 {% else %}
                                   {{ final_unlocked }}
@@ -416,7 +411,7 @@ action:
                         target: { entity_id: !input tts_engine }
                         data:
                           message: >-
-                            {% if trigger.to_state.state == 'locked' %}
+                            {% if trigger.event.data.new_state.state == 'locked' %}
                               {{ final_locked }}
                             {% else %}
                               {{ final_unlocked }}
