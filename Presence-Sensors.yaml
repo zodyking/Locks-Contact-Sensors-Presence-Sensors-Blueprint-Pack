@@ -4,30 +4,30 @@ blueprint:
     ![Aqara](https://raw.githubusercontent.com/zodyking/Locks-Contact-Sensors-Presence-Sensors-Blueprint-Pack/refs/heads/main/Image3.png)
 
     Presence-sensor-only blueprint for Aqara (e.g., FP2) or any binary_sensor that reports
-    presence/occupancy/motion. It provides optional spoken announcements, optional mobile
-    notifications, and optional device control (turn on/off lights or switches) with
-    per-direction hold times so actions feel natural and reliable.
+    presence, occupancy, or motion. Provides optional spoken announcements, optional mobile
+    notifications, and optional device control (turn on/off lights or switches) with per-direction
+    hold times so actions feel natural and reliable.
 
     What it does
-    • Announces PRESENCE DETECTED / PRESENCE CLEARED using the device’s Area name.
-    • Optional notifications to a mobile app notify service.
-    • Optional device control:
-      – Turn ON selected entities after presence has been detected for X seconds.
-      – Turn OFF selected entities after no presence for Y seconds.
-    • TTS includes a short pre-roll to prevent clipped first words.
-    • Automation runs in mode: restart so the newest state takes priority.
+    - Announces PRESENCE DETECTED / PRESENCE CLEARED using the device’s Area name.
+    - Optional notifications to a mobile app notify service.
+    - Optional device control:
+      - Turn ON selected entities after presence has been detected for X seconds.
+      - Turn OFF selected entities after no presence for Y seconds.
+    - TTS includes a short pre-roll to prevent clipped first words.
+    - Automation runs in mode: restart so the newest state takes priority.
 
     Setup
     1) Pick your presence/occupancy sensor (binary_sensor).
     2) (Optional) Choose a TTS engine (e.g., tts.piper) and speakers.
     3) Independently toggle:
-       • Speak presence announcements
-       • Send mobile notifications
+       - Speak presence announcements
+       - Send mobile notifications
     4) (Optional) Select entities to turn ON/OFF and set the hold times (0–10 s).
 
     Notes
-    • The spoken “room” name comes from the entity’s Area (Settings → Areas).
-    • Supports typical presence device classes: occupancy and motion.
+    - The spoken "room" name comes from the entity’s Area (Settings → Areas).
+    - Supports typical presence device classes: occupancy and motion.
 
   domain: automation
 
@@ -101,7 +101,7 @@ blueprint:
     announce_presence:
       name: Speak presence announcements
       description: |-
-        If on, speak “<room> presence detected/cleared”.
+        If on, speak "<room> presence detected/cleared".
       default: false
       selector:
         boolean: {}
@@ -166,7 +166,7 @@ blueprint:
         boolean: {}
 
     notify_service:
-      name: Notify service (e.g., notify.mobile_app_your_phone) — optional
+      name: Notify service (e.g., notify.mobile_app_your_phone)
       description: |-
         Exact notify service to call when notifications are enabled.
         Example: notify.mobile_app_brandon_iphone. Leave blank to disable notifications.
@@ -224,7 +224,7 @@ action:
       can_notify: >-
         {{ notify_enabled and (notify_service is string) and (notify_service|length > 0) }}
 
-      # Messages (always non-empty strings)
+      # Messages (non-empty strings)
       msg_detected: "{{ subject_presence ~ ' detected.' }}"
       msg_cleared: "{{ subject_presence ~ ' cleared.' }}"
 
@@ -281,7 +281,7 @@ action:
                       entity_id: !input tts_engine
                     data:
                       message: "{{ msg_detected }}"
-                      cache: "{{ tts_cache_val }}"
+                      cache: !input tts_cache
                       media_player_entity_id: !input media_players
                       options:
                         voice: "{{ tts_voice_name | default('') }}"
@@ -349,7 +349,7 @@ action:
                       entity_id: !input tts_engine
                     data:
                       message: "{{ msg_cleared }}"
-                      cache: "{{ tts_cache_val }}"
+                      cache: !input tts_cache
                       media_player_entity_id: !input media_players
                       options:
                         voice: "{{ tts_voice_name | default('') }}"
