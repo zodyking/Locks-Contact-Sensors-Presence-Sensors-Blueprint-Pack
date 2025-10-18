@@ -1,0 +1,367 @@
+blueprint:
+  name: "Aqara: Presence Sensors"
+  description: |-
+    ![Aqara](https://raw.githubusercontent.com/zodyking/Locks-Contact-Sensors-Presence-Sensors-Blueprint-Pack/refs/heads/main/Image3.png)
+
+    Presence-sensor-only blueprint for Aqara (e.g., FP2) or any binary_sensor that reports
+    presence/occupancy/motion. It provides optional spoken announcements, optional mobile
+    notifications, and optional device control (turn on/off lights or switches) with
+    per-direction hold times so actions feel natural and reliable.
+
+    What it does
+    • Announces PRESENCE DETECTED / PRESENCE CLEARED using the device’s Area name.
+    • Optional notifications to a mobile app notify service.
+    • Optional device control:
+      – Turn ON selected entities after presence has been detected for X seconds.
+      – Turn OFF selected entities after no presence for Y seconds.
+    • TTS includes a short pre-roll to prevent clipped first words.
+    • Automation runs in mode: restart so the newest state takes priority.
+
+    Setup
+    1) Pick your presence/occupancy sensor (binary_sensor).
+    2) (Optional) Choose a TTS engine (e.g., tts.piper) and speakers.
+    3) Independently toggle:
+       • Speak presence announcements
+       • Send mobile notifications
+    4) (Optional) Select entities to turn ON/OFF and set the hold times (0–10 s).
+
+    Notes
+    • The spoken “room” name comes from the entity’s Area (Settings → Areas).
+    • Supports typical presence device classes: occupancy and motion.
+
+  domain: automation
+
+  input:
+    presence_sensor:
+      name: Presence / Occupancy sensor
+      description: |-
+        Select the binary_sensor that indicates presence.
+        Typical device classes: occupancy or motion. ON = presence, OFF = clear.
+      selector:
+        entity:
+          domain: binary_sensor
+          device_class:
+            - occupancy
+            - motion
+
+    # ---- Action entities (optional) ----
+    on_entities:
+      name: Turn ON when presence is detected (optional)
+      description: |-
+        Select lights/switches to turn on after presence holds for X seconds.
+        Leave empty to disable.
+      default: []
+      selector:
+        entity:
+          multiple: true
+          domain:
+            - light
+            - switch
+
+    off_entities:
+      name: Turn OFF when presence is cleared (optional)
+      description: |-
+        Select lights/switches to turn off after no presence holds for Y seconds.
+        Leave empty to disable.
+      default: []
+      selector:
+        entity:
+          multiple: true
+          domain:
+            - light
+            - switch
+
+    on_hold_secs:
+      name: Presence hold BEFORE turning ON (seconds)
+      description: |-
+        How long presence must remain detected before turning ON the entities.
+        0 applies immediately on detection.
+      default: 0
+      selector:
+        number:
+          min: 0
+          max: 10
+          unit_of_measurement: seconds
+          mode: slider
+
+    off_hold_secs:
+      name: Clear hold BEFORE turning OFF (seconds)
+      description: |-
+        How long no presence must remain before turning OFF the entities.
+        0 applies immediately on clear.
+      default: 0
+      selector:
+        number:
+          min: 0
+          max: 10
+          unit_of_measurement: seconds
+          mode: slider
+
+    # ---- TTS / announcements ----
+    announce_presence:
+      name: Speak presence announcements
+      description: |-
+        If on, speak “<room> presence detected/cleared”.
+      default: false
+      selector:
+        boolean: {}
+
+    tts_engine:
+      name: TTS engine
+      description: |-
+        Pick your TTS engine entity (e.g., tts.piper).
+        Required if announcements are enabled.
+      default: ""
+      selector:
+        entity:
+          domain: tts
+
+    media_players:
+      name: Speakers for TTS
+      description: |-
+        One or more media_player entities to speak on (only used if announcements are enabled).
+      default: []
+      selector:
+        entity:
+          domain: media_player
+          multiple: true
+
+    tts_cache:
+      name: Cache TTS audio
+      description: |-
+        Allow Home Assistant to cache synthesized speech when supported by your TTS provider.
+      default: false
+      selector:
+        boolean: {}
+
+    tts_voice:
+      name: Voice name (optional)
+      description: |-
+        If supported by your TTS provider (options.voice). Leave blank to use the default voice.
+      default: ""
+      selector:
+        text: {}
+
+    tts_preroll_ms:
+      name: TTS pre-roll (milliseconds)
+      description: |-
+        Short delay before speaking to avoid clipping the first word (typical 150–200 ms).
+        Reduce if it feels slow.
+      default: 150
+      selector:
+        number:
+          min: 0
+          max: 300
+          step: 10
+          unit_of_measurement: ms
+          mode: slider
+
+    # ---- Notifications (optional) ----
+    notify_enabled:
+      name: Send mobile notification
+      description: |-
+        If on, send notifications for presence detected/cleared.
+      default: false
+      selector:
+        boolean: {}
+
+    notify_service:
+      name: Notify service (e.g., notify.mobile_app_your_phone) — optional
+      description: |-
+        Exact notify service to call when notifications are enabled.
+        Example: notify.mobile_app_brandon_iphone. Leave blank to disable notifications.
+      default: ""
+      selector:
+        text: {}
+
+mode: restart
+
+trigger:
+  - id: presence_on
+    platform: state
+    entity_id: !input presence_sensor
+    to: "on"
+
+  - id: presence_off
+    platform: state
+    entity_id: !input presence_sensor
+    to: "off"
+
+condition: []
+
+action:
+  - variables:
+      pres_ent: !input presence_sensor
+
+      # Area → room label (no friendly names for TTS)
+      room_for_presence: "{{ area_name(pres_ent) or 'Room' }}"
+      subject_presence: "{{ room_for_presence ~ ' presence' }}"
+
+      # Action entities
+      on_entities: !input on_entities
+      off_entities: !input off_entities
+
+      # Hold times
+      on_hold: !input on_hold_secs
+      off_hold: !input off_hold_secs
+
+      # TTS plumbing
+      announce_presence: !input announce_presence
+      tts_engine_ent: !input tts_engine
+      players: !input media_players
+      tts_cache_val: !input tts_cache
+      tts_voice_name: !input tts_voice
+      tts_preroll_ms: !input tts_preroll_ms
+
+      # Notify plumbing
+      notify_enabled: !input notify_enabled
+      notify_service: !input notify_service
+
+      # Gates
+      has_tts: >-
+        {{ announce_presence and (players | length > 0)
+           and (tts_engine_ent is string and tts_engine_ent|length > 0) }}
+      can_notify: >-
+        {{ notify_enabled and (notify_service is string) and (notify_service|length > 0) }}
+
+      # Messages (always non-empty strings)
+      msg_detected: "{{ subject_presence ~ ' detected.' }}"
+      msg_cleared: "{{ subject_presence ~ ' cleared.' }}"
+
+  - choose:
+
+      # ===== PRESENCE DETECTED =====
+      - conditions:
+          - condition: trigger
+            id: presence_on
+        sequence:
+          # Ensure presence holds for on_hold seconds; cancel if it clears earlier
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ (on_hold | int) > 0 }}"
+                sequence:
+                  - wait_for_trigger:
+                      - platform: state
+                        entity_id: !input presence_sensor
+                        to: "off"
+                    timeout:
+                      seconds: !input on_hold_secs
+                    continue_on_timeout: true
+                  - choose:
+                      - conditions:
+                          - condition: template
+                            value_template: "{{ wait and wait.completed | default(false) }}"
+                        sequence:
+                          - stop: "Presence cleared before ON hold elapsed; abort ON actions."
+                    default: []
+            default: []
+
+          # Optional: turn ON entities
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ (on_entities | length) > 0 }}"
+                sequence:
+                  - service: homeassistant.turn_on
+                    target:
+                      entity_id: !input on_entities
+            default: []
+
+          # TTS: presence detected
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ has_tts }}"
+                sequence:
+                  - delay:
+                      milliseconds: "{{ tts_preroll_ms | int }}"
+                  - service: tts.speak
+                    target:
+                      entity_id: !input tts_engine
+                    data:
+                      message: "{{ msg_detected }}"
+                      cache: "{{ tts_cache_val }}"
+                      media_player_entity_id: !input media_players
+                      options:
+                        voice: "{{ tts_voice_name | default('') }}"
+            default: []
+
+          # Notify: presence detected
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ can_notify }}"
+                sequence:
+                  - service: "{{ notify_service }}"
+                    data:
+                      message: "{{ msg_detected }}"
+            default: []
+
+      # ===== PRESENCE CLEARED =====
+      - conditions:
+          - condition: trigger
+            id: presence_off
+        sequence:
+          # Ensure clear holds for off_hold seconds; cancel if presence returns earlier
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ (off_hold | int) > 0 }}"
+                sequence:
+                  - wait_for_trigger:
+                      - platform: state
+                        entity_id: !input presence_sensor
+                        to: "on"
+                    timeout:
+                      seconds: !input off_hold_secs
+                    continue_on_timeout: true
+                  - choose:
+                      - conditions:
+                          - condition: template
+                            value_template: "{{ wait and wait.completed | default(false) }}"
+                        sequence:
+                          - stop: "Presence returned before OFF hold elapsed; abort OFF actions."
+                    default: []
+            default: []
+
+          # Optional: turn OFF entities
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ (off_entities | length) > 0 }}"
+                sequence:
+                  - service: homeassistant.turn_off
+                    target:
+                      entity_id: !input off_entities
+            default: []
+
+          # TTS: presence cleared
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ has_tts }}"
+                sequence:
+                  - delay:
+                      milliseconds: "{{ tts_preroll_ms | int }}"
+                  - service: tts.speak
+                    target:
+                      entity_id: !input tts_engine
+                    data:
+                      message: "{{ msg_cleared }}"
+                      cache: "{{ tts_cache_val }}"
+                      media_player_entity_id: !input media_players
+                      options:
+                        voice: "{{ tts_voice_name | default('') }}"
+            default: []
+
+          # Notify: presence cleared
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ can_notify }}"
+                sequence:
+                  - service: "{{ notify_service }}"
+                    data:
+                      message: "{{ msg_cleared }}"
+            default: []
