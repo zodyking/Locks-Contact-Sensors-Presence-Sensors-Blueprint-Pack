@@ -3,18 +3,18 @@ blueprint:
   description: |-
     ![Aqara](https://www.allthethings.best/wp-content/uploads/2025/05/Aqara-logo-scaled.jpg)
 
-    Auto-lock a smart lock X seconds after the contact sensor reports **CLOSED** (re-checks before locking).
-    Optional TTS announcements for **all** state changes of the contact sensor (door/window) and the lock.
-    Messages queue (no overlap) because this automation runs in `mode: queued`.
+    Auto-lock a smart lock X seconds after the contact sensor reports CLOSED (re-checks before locking).
+    Optional TTS announcements for all state changes of the contact sensor (door/window) and the lock.
+    Messages queue (no overlap) because this automation runs in mode: queued.
   domain: automation
 
   input:
     door_sensor:
       name: Contact sensor (door/window)
-      description: >
+      description: |-
         Pick the contact sensor for THIS door or window.
-        For most Aqara sensors, **ON = open** and **OFF = closed**.
-        Device class should be `door`, `opening`, or `window`.
+        For most Aqara sensors, ON = open and OFF = closed.
+        Device class should be door, opening, or window.
       selector:
         entity:
           domain: binary_sensor
@@ -25,14 +25,16 @@ blueprint:
 
     lock_entity:
       name: Smart lock
-      description: "Pick the lock entity to control (Aqara or any `lock.*`)."
+      description: |-
+        Pick the lock entity to control (Aqara or any lock.*).
       selector:
         entity:
           domain: lock
 
     lock_delay:
       name: Auto-lock delay (seconds)
-      description: "How long after the sensor first reports CLOSED to attempt locking."
+      description: |-
+        How long after the sensor first reports CLOSED to attempt locking.
       default: 10
       selector:
         number:
@@ -43,7 +45,7 @@ blueprint:
 
     closed_stability:
       name: Closed stability window (seconds)
-      description: >
+      description: |-
         Extra time the sensor must remain closed (no bounce) before locking.
         Set to 0 to skip. After the main delay we wait this long and re-check closed.
       default: 0
@@ -56,35 +58,40 @@ blueprint:
 
     announce_enabled:
       name: Speak announcements
-      description: "Turn on to speak every contact/lock state change."
+      description: |-
+        Turn on to speak every contact/lock state change.
       default: false
       selector:
         boolean: {}
 
     announce_sensor:
       name: Announce sensor open/close
-      description: "If on, we announce sensor opened/closed events (from your window/door sensor)."
+      description: |-
+        If on, we announce sensor opened/closed events (from your window/door sensor).
       default: true
       selector:
         boolean: {}
 
     announce_lock:
       name: Announce lock state changes
-      description: "If on, we announce locked/unlocked/locking/unlocking/jammed."
+      description: |-
+        If on, we announce locked/unlocked/locking/unlocking/jammed.
       default: true
       selector:
         boolean: {}
 
     tts_engine:
       name: TTS engine
-      description: "Pick your TTS engine entity (e.g., `tts.piper`). Required if announcements are enabled."
+      description: |-
+        Pick your TTS engine entity (e.g., tts.piper). Required if announcements are enabled.
       selector:
         entity:
           domain: tts
 
     media_players:
       name: Speakers for TTS
-      description: "One or more media_player entities to speak on (used only if announcements are enabled)."
+      description: |-
+        One or more media_player entities to speak on (used only if announcements are enabled).
       default: []
       selector:
         entity:
@@ -93,42 +100,48 @@ blueprint:
 
     tts_cache:
       name: Cache TTS audio
-      description: "Let Home Assistant cache synthesized speech when supported."
+      description: |-
+        Let Home Assistant cache synthesized speech when supported.
       default: false
       selector:
         boolean: {}
 
     tts_voice:
       name: Voice name (optional)
-      description: "If supported by your TTS provider (options.voice). Leave blank for default."
+      description: |-
+        If supported by your TTS provider (options.voice). Leave blank for default.
       default: ""
       selector:
         text: {}
 
     custom_open_msg:
       name: Custom message — sensor OPENED (optional)
-      description: 'Use {door} or {sensor}, e.g. "{door} opened." Leave blank for default.'
+      description: |-
+        Use {door} or {sensor}, e.g. "{door} opened." Leave blank for default.
       default: ""
       selector:
         text: {}
 
     custom_closed_msg:
       name: Custom message — sensor CLOSED (optional)
-      description: 'Use {door} or {sensor}, e.g. "{door} closed." Leave blank for default.'
+      description: |-
+        Use {door} or {sensor}, e.g. "{door} closed." Leave blank for default.
       default: ""
       selector:
         text: {}
 
     custom_locked_msg:
       name: Custom message — LOCKED (optional)
-      description: 'Use {lock}, e.g. "{lock} locked." Leave blank for default.'
+      description: |-
+        Use {lock}, e.g. "{lock} locked." Leave blank for default.
       default: ""
       selector:
         text: {}
 
     custom_unlocked_msg:
       name: Custom message — UNLOCKED (optional)
-      description: 'Use {lock}, e.g. "{lock} unlocked." Leave blank for default.'
+      description: |-
+        Use {lock}, e.g. "{lock} unlocked." Leave blank for default.
       default: ""
       selector:
         text: {}
@@ -186,7 +199,7 @@ action:
       do_tts_lock: "{{ has_tts and announce_lock }}"
       has_voice: "{{ (tts_voice_name | default('') | trim) != '' }}"
 
-      # ---------- FINAL message strings (used everywhere) ----------
+      # Final message strings (used everywhere)
       final_opened: >-
         {% set base = (custom_open_msg_in | default('', true) | trim) %}
         {% if base %}{{ base.replace('{door}', sensor_name).replace('{sensor}', sensor_name) }}
@@ -225,18 +238,15 @@ action:
                             value_template: "{{ has_voice }}"
                         sequence:
                           - service: tts.speak
-                            target:
-                              entity_id: !input tts_engine
+                            target: { entity_id: !input tts_engine }
                             data:
                               message: "{{ final_opened }}"
                               cache: !input tts_cache
                               media_player_entity_id: !input media_players
-                              options:
-                                voice: !input tts_voice
+                              options: { voice: !input tts_voice }
                     default:
                       - service: tts.speak
-                        target:
-                          entity_id: !input tts_engine
+                        target: { entity_id: !input tts_engine }
                         data:
                           message: "{{ final_opened }}"
                           cache: !input tts_cache
@@ -260,18 +270,15 @@ action:
                             value_template: "{{ has_voice }}"
                         sequence:
                           - service: tts.speak
-                            target:
-                              entity_id: !input tts_engine
+                            target: { entity_id: !input tts_engine }
                             data:
                               message: "{{ final_closed }}"
                               cache: !input tts_cache
                               media_player_entity_id: !input media_players
-                              options:
-                                voice: !input tts_voice
+                              options: { voice: !input tts_voice }
                     default:
                       - service: tts.speak
-                        target:
-                          entity_id: !input tts_engine
+                        target: { entity_id: !input tts_engine }
                         data:
                           message: "{{ final_closed }}"
                           cache: !input tts_cache
@@ -348,8 +355,7 @@ action:
             value_template: "{{ not is_state(lock_ent, 'locked') }}"
 
           - service: lock.lock
-            target:
-              entity_id: !input lock_entity
+            target: { entity_id: !input lock_entity }
 
           # Speak lock result (optional)
           - choose:
@@ -363,18 +369,15 @@ action:
                             value_template: "{{ has_voice }}"
                         sequence:
                           - service: tts.speak
-                            target:
-                              entity_id: !input tts_engine
+                            target: { entity_id: !input tts_engine }
                             data:
                               message: "{{ final_locked }}"
                               cache: !input tts_cache
                               media_player_entity_id: !input media_players
-                              options:
-                                voice: !input tts_voice
+                              options: { voice: !input tts_voice }
                     default:
                       - service: tts.speak
-                        target:
-                          entity_id: !input tts_engine
+                        target: { entity_id: !input tts_engine }
                         data:
                           message: "{{ final_locked }}"
                           cache: !input tts_cache
@@ -397,8 +400,7 @@ action:
                             value_template: "{{ has_voice }}"
                         sequence:
                           - service: tts.speak
-                            target:
-                              entity_id: !input tts_engine
+                            target: { entity_id: !input tts_engine }
                             data:
                               message: >-
                                 {% set s = trigger.to_state.state %}
@@ -408,12 +410,10 @@ action:
                                 {% else %}{% endif %}
                               cache: !input tts_cache
                               media_player_entity_id: !input media_players
-                              options:
-                                voice: !input tts_voice
+                              options: { voice: !input tts_voice }
                     default:
                       - service: tts.speak
-                        target:
-                          entity_id: !input tts_engine
+                        target: { entity_id: !input tts_engine }
                         data:
                           message: >-
                             {% set s = trigger.to_state.state %}
