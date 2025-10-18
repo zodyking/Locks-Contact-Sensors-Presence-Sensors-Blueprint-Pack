@@ -4,19 +4,18 @@ blueprint:
     ![Aqara](https://www.allthethings.best/wp-content/uploads/2025/05/Aqara-logo-scaled.jpg)
 
     Auto-lock a smart lock X seconds after the contact sensor reports CLOSED (re-checks before locking).
-    Optional TTS announcements for all state changes of the contact sensor (door/window) and the lock.
-    Messages queue (no overlap) because this automation runs in mode: queued.
+    Optional TTS announcements for sensor open/close and lock locked/unlocked.
+    Messages are queued (mode: queued, max: 8) to avoid audio overlap.
 
-    🔊 Default TTS phrasing is based on **Area (room)** + **Door type**:
-      • If **Bedroom** → “<room> door was <action>”
-      • If **Hallway** → “<room> door was <action>”
-      • If **Closet**   → “<room> closet door was <action>”
-      • If **Entrance** → “<room> entrance door was <action>”
-      • If **Window**   → “<room> window was <action>”
+    🔊 Default TTS phrasing uses **Area (room)** + **Door type**:
+      • Bedroom  → “<room> door was <action>”
+      • Hallway  → “<room> door was <action>”
+      • Closet   → “<room> closet door was <action>”
+      • Entrance → “<room> entrance door was <action>”
+      • Window   → “<room> window was <action>”
 
-    - “<room>” comes from the entity’s **Area**. Assign your sensor/lock to the correct Area in Home Assistant for best results.
-    - The same wording is used for both sensor events (opened/closed) and lock events (locked/unlocked).
-    - Custom messages still work and can use `{room}` to insert the resolved room/area name.
+    “<room>” comes from the entity’s Area (assign your sensor/lock to the correct Area).
+    Custom messages (optional) can use {room} to substitute the Area name.
 
   domain: automation
 
@@ -196,7 +195,7 @@ blueprint:
         text: {}
 
 mode: queued
-max: 50
+max: 8
 
 trigger:
   - id: sensor_opened
@@ -452,3 +451,28 @@ action:
                           - condition: template
                             value_template: "{{ has_voice }}"
                         sequence:
+                          - service: tts.speak
+                            target: { entity_id: !input tts_engine }
+                            data:
+                              message: >-
+                                {% if trigger.to_state.state == 'locked' %}
+                                  {{ final_locked }}
+                                {% else %}
+                                  {{ final_unlocked }}
+                                {% endif %}
+                              cache: !input tts_cache
+                              media_player_entity_id: !input media_players
+                              options: { voice: !input tts_voice }
+                    default:
+                      - service: tts.speak
+                        target: { entity_id: !input tts_engine }
+                        data:
+                          message: >-
+                            {% if trigger.to_state.state == 'locked' %}
+                              {{ final_locked }}
+                            {% else %}
+                              {{ final_unlocked }}
+                            {% endif %}
+                          cache: !input tts_cache
+                          media_player_entity_id: !input media_players
+            default: []
