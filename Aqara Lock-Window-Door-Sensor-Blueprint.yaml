@@ -1,5 +1,5 @@
 blueprint:
-  name: Aqara Door/Window Auto-Lock + Announce (Queued)
+  name: Aqara Door/Window Sensor + Door Smart Lock
   description: |-
     ![Aqara](https://www.allthethings.best/wp-content/uploads/2025/05/Aqara-logo-scaled.jpg)
 
