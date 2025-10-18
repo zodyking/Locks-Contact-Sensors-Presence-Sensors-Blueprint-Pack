@@ -1,0 +1,347 @@
+blueprint:
+  name: Aqara Sensor Announce (Door/Window, Queued)
+  description: |-
+    ![Aqara](https://www.allthethings.best/wp-content/uploads/2025/05/Aqara-logo-scaled.jpg)
+
+    Sensor-only blueprint for door/window contact sensors with optional spoken announcements,
+    “still open” reminders, and optional actions when the sensor opens.
+
+    What it does
+    • Announces OPENED/CLOSED using your device’s Area name for natural phrases.
+    • Optional reminder: repeats a message every X seconds while the sensor stays OPEN.
+    • Optional action: turn on selected lights/switches when the sensor opens.
+    • TTS has a small pre-roll to avoid clipping the first word.
+    • All speech is queued (mode: queued, max: 2) to avoid overlapping audio.
+
+    Setup
+    1) Select the contact sensor.
+    2) (Optional) Enable announcements, choose a TTS engine (e.g., tts.piper), pick speakers, voice, and preroll.
+    3) (Optional) Enable the “still open” reminder and set the interval.
+    4) (Optional) Choose lights/switches to turn on when the sensor opens.
+
+    Notes
+    • The spoken “room” name comes from the entity’s Area (Settings → Areas).
+    • Works with Aqara and other standard Home Assistant binary_sensor entities.
+
+  domain: automation
+
+  input:
+    door_sensor:
+      name: Contact sensor (door/window)
+      description: |-
+        Pick the contact sensor for THIS opening.
+        For most Aqara sensors, ON = open and OFF = closed.
+        Device class should be door, opening, or window.
+      selector:
+        entity:
+          domain: binary_sensor
+          device_class:
+            - door
+            - opening
+            - window
+
+    opening_type:
+      name: Opening type (affects TTS wording)
+      description: |-
+        Controls how the default TTS refers to the opening (used with the Area name):
+          • Bedroom  → “<room> door was <action>”
+          • Hallway  → “<room> door was <action>”
+          • Closet   → “<room> closet door was <action>”
+          • Entrance → “<room> entrance door was <action>”
+          • Window   → “<room> window was <action>”
+      default: bedroom
+      selector:
+        select:
+          mode: dropdown
+          options:
+            - bedroom
+            - hallway
+            - closet
+            - entrance
+            - window
+
+    # ---- TTS / Announce options ----
+    announce_enabled:
+      name: Speak announcements
+      description: |-
+        Turn on to speak OPENED/CLOSED and reminder messages.
+      default: false
+      selector:
+        boolean: {}
+
+    tts_engine:
+      name: TTS engine
+      description: |-
+        Pick your TTS engine entity (e.g., tts.piper). Required if announcements are enabled.
+      default: ""
+      selector:
+        entity:
+          domain: tts
+
+    media_players:
+      name: Speakers for TTS
+      description: |-
+        One or more media_player entities to speak on (used only if announcements are enabled).
+      default: []
+      selector:
+        entity:
+          domain: media_player
+          multiple: true
+
+    tts_cache:
+      name: Cache TTS audio
+      description: |-
+        Let Home Assistant cache synthesized speech when supported.
+      default: false
+      selector:
+        boolean: {}
+
+    tts_voice:
+      name: Voice name (optional)
+      description: |-
+        If supported by your TTS provider (options.voice). Leave blank for default.
+      default: ""
+      selector:
+        text: {}
+
+    tts_preroll_ms:
+      name: TTS pre-roll (milliseconds)
+      description: |-
+        Short delay before speaking to avoid clipping the start of the message.
+        If it feels slow, reduce (typical: 150–200 ms).
+      default: 150
+      selector:
+        number:
+          min: 0
+          max: 300
+          step: 10
+          unit_of_measurement: ms
+          mode: slider
+
+    # ---- Reminders ----
+    open_reminder_enabled:
+      name: Repeat reminder while OPEN
+      description: |-
+        If on, we repeat a reminder message while the sensor is OPEN until it’s CLOSED.
+      default: false
+      selector:
+        boolean: {}
+
+    reminder_interval:
+      name: Reminder interval (seconds)
+      description: |-
+        How often to repeat reminder messages while the condition stays true.
+      default: 30
+      selector:
+        number:
+          min: 15
+          max: 120
+          unit_of_measurement: seconds
+          mode: slider
+
+    # ---- Optional action on OPEN ----
+    open_turn_on_entities:
+      name: Turn on when sensor opens (optional)
+      description: |-
+        Select lights/switches to turn on immediately when the sensor opens. Leave empty to disable.
+      default: []
+      selector:
+        entity:
+          multiple: true
+          domain:
+            - light
+            - switch
+
+mode: queued
+max: 2
+
+trigger:
+  - id: sensor_opened
+    platform: state
+    entity_id: !input door_sensor
+    to: "on"
+
+  - id: sensor_closed
+    platform: state
+    entity_id: !input door_sensor
+    to: "off"
+
+condition: []
+
+action:
+  - variables:
+      sensor_ent: !input door_sensor
+
+      # Area → room label (no friendly names for TTS)
+      room_for_sensor: "{{ area_name(sensor_ent) or 'Door' }}"
+
+      # Opening type controls noun choice
+      type_in: !input opening_type
+
+      # Build the spoken subject based on opening type
+      subject_sensor: >-
+        {% set r = room_for_sensor %}
+        {% set t = (type_in or 'bedroom') %}
+        {% if t == 'window' %}
+          {{ r }} window
+        {% elif t in ['closet','entrance'] %}
+          {{ r }} {{ t }} door
+        {% else %}
+          {{ r }} door
+        {% endif %}
+
+      # TTS plumbing
+      players: !input media_players
+      tts_engine_ent: !input tts_engine
+      tts_voice_name: !input tts_voice
+      announce_enabled: !input announce_enabled
+      tts_preroll_ms: !input tts_preroll_ms
+
+      # Reminders
+      open_reminder_enabled: !input open_reminder_enabled
+      reminder_interval: !input reminder_interval
+      open_turn_on_entities: !input open_turn_on_entities
+
+      # Can we speak?
+      has_tts: >-
+        {{ announce_enabled and (players | length > 0)
+           and (tts_engine_ent is string and tts_engine_ent|length > 0) }}
+      has_voice: "{{ (tts_voice_name | default('') | trim) != '' }}"
+
+      # Messages
+      final_opened: "{{ subject_sensor ~ ' was opened.' }}"
+      final_closed: "{{ subject_sensor ~ ' was closed.' }}"
+      final_open_reminder: "{{ subject_sensor ~ ' is still open.' }}"
+
+  - choose:
+
+      # ---------- SENSOR OPENED ----------
+      - conditions:
+          - condition: trigger
+            id: sensor_opened
+        sequence:
+          # Optional: turn on entities on open
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ (open_turn_on_entities | length) > 0 }}"
+                sequence:
+                  - service: homeassistant.turn_on
+                    target:
+                      entity_id: !input open_turn_on_entities
+            default: []
+
+          # Speak OPENED
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ has_tts }}"
+                sequence:
+                  - delay:
+                      milliseconds: "{{ tts_preroll_ms | int }}"
+                  - choose:
+                      - conditions:
+                          - condition: template
+                            value_template: "{{ has_voice }}"
+                        sequence:
+                          - service: tts.speak
+                            target:
+                              entity_id: !input tts_engine
+                            data:
+                              message: "{{ final_opened }}"
+                              cache: !input tts_cache
+                              media_player_entity_id: !input media_players
+                              options:
+                                voice: !input tts_voice
+                    default:
+                      - service: tts.speak
+                        target:
+                          entity_id: !input tts_engine
+                        data:
+                          message: "{{ final_opened }}"
+                          cache: !input tts_cache
+                          media_player_entity_id: !input media_players
+            default: []
+
+          # Repeat reminder while OPEN (interruptible immediately on close)
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ has_tts and open_reminder_enabled }}"
+                sequence:
+                  - repeat:
+                      while:
+                        - condition: template
+                          value_template: "{{ states(sensor_ent) == 'on' }}"
+                      sequence:
+                        # Wait for close OR timeout → speak if still open
+                        - wait_for_trigger:
+                            - platform: state
+                              entity_id: !input door_sensor
+                              to: "off"
+                          timeout:
+                            seconds: !input reminder_interval
+                          continue_on_timeout: true
+                        - condition: template
+                          value_template: "{{ states(sensor_ent) == 'on' }}"
+                        - delay:
+                            milliseconds: "{{ tts_preroll_ms | int }}"
+                        - choose:
+                            - conditions:
+                                - condition: template
+                                  value_template: "{{ has_voice }}"
+                              sequence:
+                                - service: tts.speak
+                                  target:
+                                    entity_id: !input tts_engine
+                                  data:
+                                    message: "{{ final_open_reminder }}"
+                                    cache: !input tts_cache
+                                    media_player_entity_id: !input media_players
+                                    options:
+                                      voice: !input tts_voice
+                          default:
+                            - service: tts.speak
+                              target:
+                                entity_id: !input tts_engine
+                              data:
+                                message: "{{ final_open_reminder }}"
+                                cache: !input tts_cache
+                                media_player_entity_id: !input media_players
+            default: []
+
+      # ---------- SENSOR CLOSED ----------
+      - conditions:
+          - condition: trigger
+            id: sensor_closed
+        sequence:
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ has_tts }}"
+                sequence:
+                  - delay:
+                      milliseconds: "{{ tts_preroll_ms | int }}"
+                  - choose:
+                      - conditions:
+                          - condition: template
+                            value_template: "{{ has_voice }}"
+                        sequence:
+                          - service: tts.speak
+                            target:
+                              entity_id: !input tts_engine
+                            data:
+                              message: "{{ final_closed }}"
+                              cache: !input tts_cache
+                              media_player_entity_id: !input media_players
+                              options:
+                                voice: !input tts_voice
+                    default:
+                      - service: tts.speak
+                        target:
+                          entity_id: !input tts_engine
+                        data:
+                          message: "{{ final_closed }}"
+                          cache: !input tts_cache
+                          media_player_entity_id: !input media_players
+            default: []
