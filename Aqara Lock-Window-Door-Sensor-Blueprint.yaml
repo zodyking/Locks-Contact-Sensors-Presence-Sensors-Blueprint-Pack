@@ -132,27 +132,35 @@ blueprint:
     # Optional custom messages (use {room}) – leave blank to use standardized defaults
     custom_open_msg:
       name: Custom message — sensor OPENED (optional)
-      description: Use {room}. Example: "{room} door was opened."
+      description: |-
+        Use {room}. Example: "{room} door was opened."
       default: ""
-      selector: { text: {} }
+      selector:
+        text: {}
 
     custom_closed_msg:
       name: Custom message — sensor CLOSED (optional)
-      description: Use {room}. Example: "{room} door was closed."
+      description: |-
+        Use {room}. Example: "{room} door was closed."
       default: ""
-      selector: { text: {} }
+      selector:
+        text: {}
 
     custom_locked_msg:
       name: Custom message — LOCKED (optional)
-      description: Use {room}. Example: "{room} door was locked."
+      description: |-
+        Use {room}. Example: "{room} door was locked."
       default: ""
-      selector: { text: {} }
+      selector:
+        text: {}
 
     custom_unlocked_msg:
       name: Custom message — UNLOCKED (optional)
-      description: Use {room}. Example: "{room} door was unlocked."
+      description: |-
+        Use {room}. Example: "{room} door was unlocked."
       default: ""
-      selector: { text: {} }
+      selector:
+        text: {}
 
 mode: queued
 max: 50
