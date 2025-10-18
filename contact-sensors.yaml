@@ -256,3 +256,77 @@ action:
                             target:
                               entity_id: !input tts_engine
                             data:
+                              message: "{{ (final_opened | default('')) }}"
+                              cache: !input tts_cache
+                              media_player_entity_id: !input media_players
+                              options:
+                                voice: !input tts_voice
+                    default:
+                      - service: tts.speak
+                        target:
+                          entity_id: !input tts_engine
+                        data:
+                          message: "{{ (final_opened | default('')) }}"
+                          cache: !input tts_cache
+                          media_player_entity_id: !input media_players
+            default: []
+
+          # Repeat reminder while OPEN (independent toggle)
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ can_tts_reminder }}"
+                sequence:
+                  - repeat:
+                      while:
+                        - condition: template
+                          value_template: "{{ states(sensor_ent) == 'on' }}"
+                      sequence:
+                        # Wait for close OR timeout → speak if still open
+                        - wait_for_trigger:
+                            - platform: state
+                              entity_id: !input door_sensor
+                              to: "off"
+                          timeout:
+                            seconds: !input reminder_interval
+                          continue_on_timeout: true
+                        - condition: template
+                          value_template: "{{ states(sensor_ent) == 'on' }}"
+                        - delay:
+                            milliseconds: "{{ tts_preroll_ms | int }}"
+                        - choose:
+                            - conditions:
+                                - condition: template
+                                  value_template: "{{ has_voice }}"
+                              sequence:
+                                - service: tts.speak
+                                  target:
+                                    entity_id: !input tts_engine
+                                  data:
+                                    message: "{{ (final_open_reminder | default('')) }}"
+                                    cache: !input tts_cache
+                                    media_player_entity_id: !input media_players
+                                    options:
+                                      voice: !input tts_voice
+                          default:
+                            - service: tts.speak
+                              target:
+                                entity_id: !input tts_engine
+                              data:
+                                message: "{{ (final_open_reminder | default('')) }}"
+                                cache: !input tts_cache
+                                media_player_entity_id: !input media_players
+            default: []
+
+      # ---------- SENSOR CLOSED ----------
+      - conditions:
+          - condition: trigger
+            id: sensor_closed
+        sequence:
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ can_tts_openclose }}"
+                sequence:
+                  - delay:
+                      milliseconds: "{{ tts
