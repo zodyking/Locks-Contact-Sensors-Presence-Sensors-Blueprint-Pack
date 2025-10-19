@@ -1,108 +1,104 @@
 blueprint:
-  name: "Aqara: Contact Sensors"
-  description: |-
-    ![Aqara](https://raw.githubusercontent.com/zodyking/Aqara-Lock---Sensor-Blueprint/refs/heads/main/Image2.png)
+  name: Oil Diffuser Ai
+  description: |
+    ![OilDiffuser](https://raw.githubusercontent.com/zodyking/oil-diffuser-blueprint/refs/heads/main/ChatGPT%20Image%20Oct%2018%2C%202025%2C%2007_21_16%20PM.png)
 
-    Sensor-only blueprint for door/window contact sensors with optional spoken announcements,
-    “still open” reminders, and optional actions when the sensor opens.
-
-    What it does
-    • Announces OPENED/CLOSED using your device’s Area name for natural phrases.
-    • Optional reminder: repeats a message every X seconds while the sensor stays OPEN.
-    • Optional action: turn on selected lights/switches when the sensor opens.
-    • TTS has a small pre-roll to avoid clipping the start of the message.
-    • All speech is queued (mode: queued, max: 2) to avoid overlapping audio.
-
-    Setup
-    1) Select the contact sensor.
-    2) (Optional) Choose a TTS engine (e.g., tts.piper) and speakers.
-    3) Independently toggle:
-       • Speak open/close announcements
-       • Repeat reminder while OPEN (and set the interval)
-    4) (Optional) Choose lights/switches to turn on when the sensor opens.
-
-    Notes
-    • The spoken “room” name comes from the entity’s Area (Settings → Areas).
-    • Works with Aqara and other standard Home Assistant binary_sensor entities.
-
+    Control a waterless oil diffuser via a smart outlet with **two independent modes** that can run at the same time:
+    • Duty cycle — every X minutes, turn ON for Y minutes  
+    • Presence — when presence is detected, turn ON for Z minutes  
+    Optional TTS before ON and a safety max-runtime cutoff.
   domain: automation
+  author: zodyking
+  source_url: https://example.com/blueprints/oil_diffuser_ai
 
   input:
-    door_sensor:
-      name: Contact sensor (door/window)
-      description: |-
-        Pick the contact sensor for THIS opening.
-        For most Aqara sensors, ON = open and OFF = closed.
-        Device class should be door, opening, or window.
+    # ---- Required ----
+    outlet_switch:
+      name: Diffuser outlet
       selector:
         entity:
-          domain: binary_sensor
-          device_class:
-            - door
-            - opening
-            - window
+          domain: switch
 
-    opening_type:
-      name: Opening type (affects TTS wording)
-      description: |-
-        Controls how the default TTS refers to the opening (used with the Area name):
-          • Standard → “<room> door was <action>”
-          • Closet   → “<room> closet door was <action>”
-          • Entrance → “<room> entrance door was <action>”
-          • Window   → “<room> window was <action>”
-      default: standard
-      selector:
-        select:
-          mode: dropdown
-          options:
-            - standard
-            - closet
-            - entrance
-            - window
-
-    # ---- Independent announcement toggles ----
-    announce_openclose:
-      name: Speak open/close announcements
-      description: |-
-        If on, we speak the OPENED and CLOSED messages.
-      default: false
+    # ---- Duty cycle ----
+    duty_enabled:
+      name: Duty cycle enabled
+      default: true
       selector:
         boolean: {}
 
-    open_reminder_enabled:
-      name: Repeat reminder while OPEN
-      description: |-
-        If on, we repeat a reminder message while the sensor is OPEN until it’s CLOSED.
-      default: false
-      selector:
-        boolean: {}
-
-    reminder_interval:
-      name: Reminder interval (seconds)
-      description: |-
-        How often to repeat reminder messages while the condition stays true.
+    duty_interval_minutes:
+      name: Duty cycle interval (minutes)
+      description: "Every X minutes, start one ON period."
       default: 30
       selector:
         number:
-          min: 15
-          max: 120
-          unit_of_measurement: seconds
-          mode: slider
+          min: 1
+          max: 1440
+          step: 1
+          unit_of_measurement: min
 
-    # ---- TTS plumbing ----
+    duty_on_duration:
+      name: Duty cycle ON duration
+      description: "How long to keep the outlet ON each cycle."
+      default:
+        hours: 0
+        minutes: 8
+        seconds: 0
+      selector:
+        duration: {}
+
+    # ---- Presence ----
+    presence_enabled:
+      name: Presence mode enabled
+      default: true
+      selector:
+        boolean: {}
+
+    presence_sensor:
+      name: Presence / motion sensor
+      description: "Used when Presence mode is enabled."
+      default: ""
+      selector:
+        entity:
+          domain: binary_sensor
+
+    presence_on_state:
+      name: Presence 'ON' state
+      description: "State that means detected/present."
+      default: "on"
+      selector:
+        select:
+          options: ["on", "home", "occupied", "detected"]
+
+    presence_on_duration:
+      name: Presence ON duration
+      description: "How long to keep the outlet ON after presence is detected."
+      default:
+        hours: 0
+        minutes: 20
+        seconds: 0
+      selector:
+        duration: {}
+
+    # ---- TTS (mirrors Aqara pattern) ----
+    tts_enabled:
+      name: TTS announcement before turning ON
+      description: "Speaks a short message using the outlet's Area name."
+      default: false
+      selector:
+        boolean: {}
+
     tts_engine:
       name: TTS engine
-      description: |-
-        Pick your TTS engine entity (e.g., tts.piper). Required if either announcements or reminders are enabled.
+      description: "Pick your TTS engine entity (e.g., tts.piper)."
       default: ""
       selector:
         entity:
           domain: tts
 
-    media_players:
+    tts_media_players:
       name: Speakers for TTS
-      description: |-
-        One or more media_player entities to speak on.
+      description: "One or more media_player entities to speak on."
       default: []
       selector:
         entity:
@@ -111,25 +107,20 @@ blueprint:
 
     tts_cache:
       name: Cache TTS audio
-      description: |-
-        Let Home Assistant cache synthesized speech when supported.
       default: false
       selector:
         boolean: {}
 
     tts_voice:
       name: Voice name (optional)
-      description: |-
-        If supported by your TTS provider (options.voice). Leave blank for default.
+      description: "If supported by your TTS provider (options.voice)."
       default: ""
       selector:
         text: {}
 
     tts_preroll_ms:
       name: TTS pre-roll (milliseconds)
-      description: |-
-        Short delay before speaking to avoid clipping the start of the message.
-        If it feels slow, reduce (typical: 150–200 ms).
+      description: "Short delay before speaking to avoid clipping."
       default: 150
       selector:
         number:
@@ -137,107 +128,103 @@ blueprint:
           max: 300
           step: 10
           unit_of_measurement: ms
-          mode: slider
 
-    # ---- Optional action on OPEN ----
-    open_turn_on_entities:
-      name: Turn on when sensor opens (optional)
-      description: |-
-        Select lights/switches to turn on immediately when the sensor opens. Leave empty to disable.
-      default: []
+    # ---- Safety ----
+    max_runtime:
+      name: Safety cutoff — max ON runtime
+      description: "If the outlet stays ON this long for any reason, force OFF."
+      default:
+        hours: 2
+        minutes: 0
+        seconds: 0
       selector:
-        entity:
-          multiple: true
-          domain:
-            - light
-            - switch
+        duration: {}
 
+# Queue speech to avoid overlap; actions themselves can run in parallel
 mode: queued
-max: 2
+max: 4
 
+# ---------------- Variables ----------------
+variables:
+  v_switch: !input outlet_switch
+
+  # Duty
+  duty_enabled: !input duty_enabled
+  v_interval: !input duty_interval_minutes
+  v_duty_dur: !input duty_on_duration
+
+  # Presence
+  presence_enabled: !input presence_enabled
+  v_presence: !input presence_sensor
+  v_presence_on: !input presence_on_state
+  v_presence_dur: !input presence_on_duration
+
+  # TTS plumbing (Aqara-style)
+  speak_enabled: !input tts_enabled
+  tts_engine_ent: !input tts_engine
+  players: !input tts_media_players
+  tts_cache: !input tts_cache
+  tts_voice_name: !input tts_voice
+  tts_preroll_ms: !input tts_preroll_ms
+
+  # Can we speak at all?
+  has_tts: >-
+    {{ (players | length > 0)
+       and (tts_engine_ent is string and tts_engine_ent | length > 0)
+       and speak_enabled }}
+
+  # Auto message from Area name (fallback to "the room")
+  v_msg: >-
+    {% set area = area_name(v_switch) %}
+    {{ 'Freshening up ' ~ (area if area else 'the room') ~ '.' }}
+
+# ---------------- Triggers ----------------
 trigger:
-  - id: sensor_opened
-    platform: state
-    entity_id: !input door_sensor
-    to: "on"
+  # Duty-cycle tick: evaluate every minute; branch checks enable & interval
+  - id: duty_tick
+    platform: time_pattern
+    minutes: "/1"
 
-  - id: sensor_closed
+  # Presence ON (template trigger is safe if sensor left blank)
+  - id: presence_on
+    platform: template
+    value_template: >-
+      {{ presence_enabled
+         and (v_presence | string | length > 0)
+         and is_state(v_presence, v_presence_on) }}
+
+  # Safety cutoff
+  - id: safety_cutoff
     platform: state
-    entity_id: !input door_sensor
-    to: "off"
+    entity_id: !input outlet_switch
+    to: "on"
+    for: !input max_runtime
 
 condition: []
 
+# ---------------- Actions ----------------
 action:
   - variables:
-      sensor_ent: !input door_sensor
-
-      # Area → room label (no friendly names for TTS)
-      room_for_sensor: "{{ area_name(sensor_ent) or 'Door' }}"
-
-      # Opening type controls noun choice
-      type_in: !input opening_type
-
-      # Build the spoken subject based on opening type
-      subject_sensor: >-
-        {% set r = room_for_sensor %}
-        {% set t = (type_in or 'standard') %}
-        {% if t == 'window' %}
-          {{ r }} window
-        {% elif t in ['closet','entrance'] %}
-          {{ r }} {{ t }} door
-        {% else %}
-          {{ r }} door
-        {% endif %}
-
-      # TTS plumbing / toggles
-      players: !input media_players
-      tts_engine_ent: !input tts_engine
-      tts_voice_name: !input tts_voice
-      tts_preroll_ms: !input tts_preroll_ms
-
-      announce_openclose: !input announce_openclose
-      open_reminder_enabled: !input open_reminder_enabled
-      reminder_interval: !input reminder_interval
-      open_turn_on_entities: !input open_turn_on_entities
-
-      # Can we speak at all? (independent of which feature is toggled)
-      has_tts: >-
-        {{ (players | length > 0)
-           and (tts_engine_ent is string and tts_engine_ent|length > 0) }}
-
-      # Feature-specific gates
-      can_tts_openclose: "{{ has_tts and announce_openclose }}"
-      can_tts_reminder: "{{ has_tts and open_reminder_enabled }}"
-
-      # Messages (always non-empty strings)
-      final_opened: "{{ (subject_sensor ~ ' was opened.') }}"
-      final_closed: "{{ (subject_sensor ~ ' was closed.') }}"
-      final_open_reminder: "{{ (subject_sensor ~ ' is still open.') }}"
+      # recompute per-run in case Areas change
+      v_msg_now: >-
+        {% set area = area_name(v_switch) %}
+        {{ 'Freshening up ' ~ (area if area else 'the room') ~ '.' }}
 
   - choose:
 
-      # ---------- SENSOR OPENED ----------
+      # ---- Duty cycle (independent) ----
       - conditions:
-          - condition: trigger
-            id: sensor_opened
+          - condition: template
+            value_template: "{{ trigger.id == 'duty_tick' and duty_enabled }}"
+          - condition: template
+            value_template: >-
+              {% set iv = (v_interval | int(1)) %}
+              {{ ((as_timestamp(now()) | int // 60) % iv) == 0 }}
         sequence:
-          # Optional: turn on entities on open
           - choose:
               - conditions:
                   - condition: template
-                    value_template: "{{ (open_turn_on_entities | length) > 0 }}"
-                sequence:
-                  - service: homeassistant.turn_on
-                    target:
-                      entity_id: !input open_turn_on_entities
-            default: []
-
-          # Speak OPENED (independent toggle)
-          - choose:
-              - conditions:
-                  - condition: template
-                    value_template: "{{ can_tts_openclose }}"
+                    value_template: "{{ has_tts and is_state(v_switch,'off') }}"
                 sequence:
                   - delay:
                       milliseconds: "{{ tts_preroll_ms | int }}"
@@ -245,66 +232,34 @@ action:
                     target:
                       entity_id: !input tts_engine
                     data:
-                      message: "{{ final_opened }}"
+                      message: "{{ v_msg_now }}"
                       cache: !input tts_cache
-                      media_player_entity_id: !input media_players
+                      media_player_entity_id: !input tts_media_players
                       options:
                         voice: "{{ tts_voice_name | default('') }}"
             default: []
+          - service: switch.turn_on
+            target:
+              entity_id: !input outlet_switch
+          - delay: !input duty_on_duration
+          - if:
+              - condition: state
+                entity_id: !input outlet_switch
+                state: "on"
+            then:
+              - service: switch.turn_off
+                target:
+                  entity_id: !input outlet_switch
 
-          # Repeat reminder while OPEN (independent toggle)
-          - choose:
-              - conditions:
-                  - condition: template
-                    value_template: "{{ can_tts_reminder }}"
-                sequence:
-                  - repeat:
-                      while:
-                        - condition: template
-                          value_template: "{{ states(sensor_ent) == 'on' }}"
-                      sequence:
-                        # Wait for close OR timeout → speak if still open
-                        - wait_for_trigger:
-                            - platform: state
-                              entity_id: !input door_sensor
-                              to: "off"
-                          timeout:
-                            seconds: !input reminder_interval
-                          continue_on_timeout: true
-                        - condition: template
-                          value_template: "{{ states(sensor_ent) == 'on' }}"
-                        - delay:
-                            milliseconds: "{{ tts_preroll_ms | int }}"
-                        - service: tts.speak
-                          target:
-                            entity_id: !input tts_engine
-                          data:
-                            message: "{{ final_open_reminder }}"
-                            cache: !input tts_cache
-                            media_player_entity_id: !input media_players
-                            options:
-                              voice: "{{ tts_voice_name | default('') }}"
-            default: []
-
-      # ---------- SENSOR CLOSED ----------
+      # ---- Presence (independent) ----
       - conditions:
-          - condition: trigger
-            id: sensor_closed
+          - condition: template
+            value_template: "{{ trigger.id == 'presence_on' }}"
         sequence:
           - choose:
               - conditions:
                   - condition: template
-                    value_template: "{{ can_tts_openclose }}"
+                    value_template: "{{ has_tts and is_state(v_switch,'off') }}"
                 sequence:
                   - delay:
-                      milliseconds: "{{ tts_preroll_ms | int }}"
-                  - service: tts.speak
-                    target:
-                      entity_id: !input tts_engine
-                    data:
-                      message: "{{ final_closed }}"
-                      cache: !input tts_cache
-                      media_player_entity_id: !input media_players
-                      options:
-                        voice: "{{ tts_voice_name | default('') }}"
-            default: []
+                      milliseconds: "{{ tts_preroll_m
