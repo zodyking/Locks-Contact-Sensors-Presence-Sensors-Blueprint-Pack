@@ -241,15 +241,28 @@ action:
                 sequence:
                   - delay:
                       milliseconds: "{{ tts_preroll_ms | int }}"
-                  - service: tts.speak
-                    target:
-                      entity_id: !input tts_engine
-                    data:
-                      message: "{{ final_opened }}"
-                      cache: !input tts_cache
-                      media_player_entity_id: !input media_players
-                      options:
-                        voice: "{{ tts_voice_name | default('') }}"
+                  - choose:
+                      - conditions:
+                          - condition: template
+                            value_template: "{{ (tts_voice_name | trim) != '' }}"
+                        sequence:
+                          - service: tts.speak
+                            target:
+                              entity_id: !input tts_engine
+                            data:
+                              message: "{{ final_opened }}"
+                              cache: !input tts_cache
+                              media_player_entity_id: !input media_players
+                              options:
+                                voice: "{{ tts_voice_name }}"
+                    default:
+                      - service: tts.speak
+                        target:
+                          entity_id: !input tts_engine
+                        data:
+                          message: "{{ final_opened }}"
+                          cache: !input tts_cache
+                          media_player_entity_id: !input media_players
             default: []
 
           # Repeat reminder while OPEN (independent toggle)
@@ -275,15 +288,28 @@ action:
                           value_template: "{{ states(sensor_ent) == 'on' }}"
                         - delay:
                             milliseconds: "{{ tts_preroll_ms | int }}"
-                        - service: tts.speak
-                          target:
-                            entity_id: !input tts_engine
-                          data:
-                            message: "{{ final_open_reminder }}"
-                            cache: !input tts_cache
-                            media_player_entity_id: !input media_players
-                            options:
-                              voice: "{{ tts_voice_name | default('') }}"
+                        - choose:
+                            - conditions:
+                                - condition: template
+                                  value_template: "{{ (tts_voice_name | trim) != '' }}"
+                              sequence:
+                                - service: tts.speak
+                                  target:
+                                    entity_id: !input tts_engine
+                                  data:
+                                    message: "{{ final_open_reminder }}"
+                                    cache: !input tts_cache
+                                    media_player_entity_id: !input media_players
+                                    options:
+                                      voice: "{{ tts_voice_name }}"
+                          default:
+                            - service: tts.speak
+                              target:
+                                entity_id: !input tts_engine
+                              data:
+                                message: "{{ final_open_reminder }}"
+                                cache: !input tts_cache
+                                media_player_entity_id: !input media_players
             default: []
 
       # ---------- SENSOR CLOSED ----------
@@ -298,13 +324,26 @@ action:
                 sequence:
                   - delay:
                       milliseconds: "{{ tts_preroll_ms | int }}"
-                  - service: tts.speak
-                    target:
-                      entity_id: !input tts_engine
-                    data:
-                      message: "{{ final_closed }}"
-                      cache: !input tts_cache
-                      media_player_entity_id: !input media_players
-                      options:
-                        voice: "{{ tts_voice_name | default('') }}"
+                  - choose:
+                      - conditions:
+                          - condition: template
+                            value_template: "{{ (tts_voice_name | trim) != '' }}"
+                        sequence:
+                          - service: tts.speak
+                            target:
+                              entity_id: !input tts_engine
+                            data:
+                              message: "{{ final_closed }}"
+                              cache: !input tts_cache
+                              media_player_entity_id: !input media_players
+                              options:
+                                voice: "{{ tts_voice_name }}"
+                    default:
+                      - service: tts.speak
+                        target:
+                          entity_id: !input tts_engine
+                        data:
+                          message: "{{ final_closed }}"
+                          cache: !input tts_cache
+                          media_player_entity_id: !input media_players
             default: []
