@@ -1,5 +1,5 @@
 blueprint:
-  name: "Presence: Bathroom"
+  name: "Aqara: Contact Sensors"
   description: |-
     Presence-based room control with ON hold, OFF delay, optional TTS, and Mobile App notifications.
     • OFF entities are chosen with an entity selector (“Turn OFF after presence clears”).
@@ -161,7 +161,6 @@ action:
       players: !input media_players
       tts_voice_name: !input tts_voice
       tts_preroll_ms: !input tts_preroll_ms
-      tts_cache_val: !input tts_cache
       tts_enabled_on: !input tts_enabled_on
       tts_enabled_off: !input tts_enabled_off
       has_tts: >-
@@ -263,10 +262,10 @@ action:
                             _slug: >-
                               {{ device_attr(repeat.item, 'name')
                                  | string | lower | regex_replace('[^a-z0-9]+','_') }}
-                            _svc: "{{ 'notify.mobile_app_' ~ _slug }}"
+                            _svc_name: "{{ 'mobile_app_' ~ _slug }}"
                         - condition: template
-                          value_template: "{{ has_service(_svc) }}"
-                        - service: "{{ _svc }}"
+                          value_template: "{{ has_service('notify', _svc_name) }}"
+                        - service: "notify.{{ _svc_name }}"
                           data:
                             message: "{{ msg_detected }}"
             default: []
