@@ -1,19 +1,16 @@
 blueprint:
-  name: "Presence — Room Lights + TTS + Mobile Notifications"
+  name: "Presence: Bathroom"
   description: |-
-    Turn lights on with presence, (optionally) speak and notify, and turn them off after presence clears.
-
-    • ON hold: require presence to persist N seconds before acting.
-    • OFF delay: wait N seconds after presence clears before turning things off.
-    • Mobile notifications: selects Mobile App devices and calls per-device services.
-    • TTS: pre-roll delay; voice sent only when provided (prevents “Invalid options: voice”).
+    Presence-based room control with ON hold, OFF delay, optional TTS, and Mobile App notifications.
+    • OFF entities are chosen with an entity selector (“Turn OFF after presence clears”).
+    • TTS only sends options.voice when provided (prevents Invalid options: voice).
+    • Mobile notifications call each device’s notify.mobile_app_* service (no invalid target errors).
 
   domain: automation
 
   input:
     presence_sensor:
       name: Presence / Motion sensor
-      description: Binary sensor that reports presence (on = detected).
       selector:
         entity:
           domain: binary_sensor
@@ -25,7 +22,6 @@ blueprint:
     # --- Actions on presence ON ---
     on_hold:
       name: Hold before ON (seconds)
-      description: Require continuous presence for this long before acting.
       default: 0
       selector:
         number:
@@ -36,8 +32,7 @@ blueprint:
           mode: slider
 
     on_entities:
-      name: Turn ON these when presence starts
-      description: Lights / switches to turn on.
+      name: Turn ON when presence starts
       default: []
       selector:
         entity:
@@ -47,12 +42,6 @@ blueprint:
             - switch
 
     # --- Actions on presence OFF ---
-    off_when_clear:
-      name: Turn OFF after presence clears
-      default: true
-      selector:
-        boolean: {}
-
     off_delay:
       name: OFF delay (seconds)
       description: Wait this long after presence clears, then turn OFF.
@@ -65,9 +54,9 @@ blueprint:
           unit_of_measurement: s
           mode: slider
 
-    off_entities:
-      name: Turn OFF these when presence ends (optional)
-      description: Leave empty to turn off the same entities used for ON.
+    off_after_entities:
+      name: Turn OFF after presence clears
+      description: Entities to turn OFF when presence ends (leave empty to use the same list as ON).
       default: []
       selector:
         entity:
@@ -112,14 +101,12 @@ blueprint:
 
     tts_voice:
       name: Voice name (optional)
-      description: Only used if your TTS provider supports voice selection.
       default: ""
       selector:
         text: {}
 
     tts_preroll_ms:
       name: TTS pre-roll (ms)
-      description: Short delay before speaking to avoid clipping.
       default: 150
       selector:
         number:
@@ -138,7 +125,6 @@ blueprint:
 
     notify_devices:
       name: Mobile App devices to notify
-      description: Pick phones/tablets registered via the Mobile App.
       default: []
       selector:
         device:
@@ -166,19 +152,16 @@ action:
       sensor_ent: !input presence_sensor
       room_name: "{{ area_name(sensor_ent) or 'Room' }}"
       on_entities: !input on_entities
-      off_entities_in: !input off_entities
-      off_entities_final: >-
-        {{ (off_entities_in if (off_entities_in | length) > 0 else on_entities) }}
+      off_after_entities: !input off_after_entities
       on_hold: !input on_hold
       off_delay: !input off_delay
-      off_when_clear: !input off_when_clear
 
       # TTS
       tts_engine_ent: !input tts_engine
       players: !input media_players
       tts_voice_name: !input tts_voice
       tts_preroll_ms: !input tts_preroll_ms
-      tts_cache: !input tts_cache
+      tts_cache_val: !input tts_cache
       tts_enabled_on: !input tts_enabled_on
       tts_enabled_off: !input tts_enabled_off
       has_tts: >-
@@ -192,7 +175,7 @@ action:
       # Notifications
       notify_enabled: !input notify_enabled
       notify_devices: !input notify_devices
-      can_notify: "{{ notify_enabled and (notify_devices | length > 0) }}"
+      can_notify: "{{ notify_enabled and (notify_devices | length) > 0 }}"
       msg_detected: "{{ 'Presence detected in ' ~ room_name ~ '.' }}"
 
   - choose:
@@ -253,7 +236,7 @@ action:
                               entity_id: !input tts_engine
                             data:
                               message: "{{ tts_msg_on }}"
-                              cache: "{{ tts_cache }}"
+                              cache: !input tts_cache
                               media_player_entity_id: !input media_players
                               options:
                                 voice: "{{ tts_voice_name }}"
@@ -263,7 +246,7 @@ action:
                           entity_id: !input tts_engine
                         data:
                           message: "{{ tts_msg_on }}"
-                          cache: "{{ tts_cache }}"
+                          cache: !input tts_cache
                           media_player_entity_id: !input media_players
             default: []
 
@@ -294,17 +277,29 @@ action:
             id: presence_off
         sequence:
 
-          # Optional OFF delay + turn OFF
+          # OFF using the selected list if provided; otherwise fall back to ON list
           - choose:
+              # Use explicit OFF list if set
               - conditions:
                   - condition: template
-                    value_template: "{{ off_when_clear and (off_entities_final | length) > 0 }}"
+                    value_template: "{{ (off_after_entities | length) > 0 }}"
                 sequence:
                   - delay:
                       seconds: "{{ off_delay | int }}"
                   - service: homeassistant.turn_off
                     target:
-                      entity_id: "{{ off_entities_final }}"
+                      entity_id: !input off_after_entities
+
+              # Fallback to ON entities when OFF list is empty
+              - conditions:
+                  - condition: template
+                    value_template: "{{ (off_after_entities | length) == 0 and (on_entities | length) > 0 }}"
+                sequence:
+                  - delay:
+                      seconds: "{{ off_delay | int }}"
+                  - service: homeassistant.turn_off
+                    target:
+                      entity_id: !input on_entities
             default: []
 
           # TTS on clear (conditional voice)
@@ -325,7 +320,7 @@ action:
                               entity_id: !input tts_engine
                             data:
                               message: "{{ tts_msg_off }}"
-                              cache: "{{ tts_cache }}"
+                              cache: !input tts_cache
                               media_player_entity_id: !input media_players
                               options:
                                 voice: "{{ tts_voice_name }}"
@@ -335,6 +330,6 @@ action:
                           entity_id: !input tts_engine
                         data:
                           message: "{{ tts_msg_off }}"
-                          cache: "{{ tts_cache }}"
+                          cache: !input tts_cache
                           media_player_entity_id: !input media_players
             default: []
