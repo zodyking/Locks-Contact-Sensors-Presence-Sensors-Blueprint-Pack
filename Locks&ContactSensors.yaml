@@ -267,3 +267,265 @@ action:
       do_tts_sensor: "{{ has_tts and announce_mode == 'sensor' }}"
       do_tts_lock: "{{ has_tts and announce_mode == 'lock' }}"
       do_tts_open_reminder: "{{ has_tts and reminder_mode == 'open' }}"
+      do_tts_unlocked_reminder: "{{ has_tts and reminder_mode == 'unlocked' }}"
+
+      # Optional action targets
+      open_turn_on_entities: !input open_turn_on_entities
+      close_turn_off_entities: !input close_turn_off_entities
+      unlock_turn_on_entities: !input unlock_turn_on_entities
+
+      reminder_interval: !input reminder_interval
+
+      # Messages
+      final_opened: "{{ subject_sensor ~ ' was opened.' }}"
+      final_closed: "{{ subject_sensor ~ ' was closed.' }}"
+      final_locked: "{{ subject_lock ~ ' was locked.' }}"
+      final_unlocked: "{{ subject_lock ~ ' was unlocked.' }}"
+      final_open_reminder: "{{ subject_sensor ~ ' is still open.' }}"
+      final_unlocked_reminder: "{{ subject_lock ~ ' is still unlocked.' }}"
+
+  - choose:
+
+      # ---------- SENSOR OPENED ----------
+      - conditions: [{ condition: trigger, id: sensor_opened }]
+        sequence:
+          # Optional: turn on entities on open
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ (open_turn_on_entities | length) > 0 }}"
+                sequence:
+                  - service: homeassistant.turn_on
+                    target: { entity_id: !input open_turn_on_entities }
+            default: []
+
+          # Speak OPENED
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ do_tts_sensor }}"
+                sequence:
+                  - delay: { milliseconds: "{{ tts_preroll_ms | int }}" }
+                  - service: media_player.volume_set
+                    target: { entity_id: !input media_players }
+                    data: { volume_level: "{{ tts_volume_level }}" }
+                  - choose:
+                      - conditions: [{ condition: template, value_template: "{{ use_voice_option }}" }]
+                        sequence:
+                          - service: tts.speak
+                            target: { entity_id: !input tts_engine }
+                            data:
+                              message: "{{ final_opened }}"
+                              cache: !input tts_cache
+                              media_player_entity_id: !input media_players
+                              options: { voice: !input tts_voice }
+                    default:
+                      - service: tts.speak
+                        target: { entity_id: !input tts_engine }
+                        data:
+                          message: "{{ final_opened }}"
+                          cache: !input tts_cache
+                          media_player_entity_id: !input media_players
+            default: []
+
+          # Repeat reminder while OPEN
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ do_tts_open_reminder }}"
+                sequence:
+                  - repeat:
+                      while:
+                        - condition: template
+                          value_template: "{{ states(sensor_ent) == 'on' }}"
+                      sequence:
+                        - wait_for_trigger:
+                            - platform: state
+                              entity_id: !input door_sensor
+                              to: "off"
+                          timeout: { seconds: !input reminder_interval }
+                          continue_on_timeout: true
+                        - condition: template
+                          value_template: "{{ states(sensor_ent) == 'on' }}"
+                        - delay: { milliseconds: "{{ tts_preroll_ms | int }}" }
+                        - service: media_player.volume_set
+                          target: { entity_id: !input media_players }
+                          data: { volume_level: "{{ tts_volume_level }}" }
+                        - choose:
+                            - conditions: [{ condition: template, value_template: "{{ use_voice_option }}" }]
+                              sequence:
+                                - service: tts.speak
+                                  target: { entity_id: !input tts_engine }
+                                  data:
+                                    message: "{{ final_open_reminder }}"
+                                    cache: !input tts_cache
+                                    media_player_entity_id: !input media_players
+                                    options: { voice: !input tts_voice }
+                          default:
+                            - service: tts.speak
+                              target: { entity_id: !input tts_engine }
+                              data:
+                                message: "{{ final_open_reminder }}"
+                                cache: !input tts_cache
+                                media_player_entity_id: !input media_players
+            default: []
+
+      # ---------- SENSOR CLOSED (speak, then reliable auto-lock) ----------
+      - conditions: [{ condition: trigger, id: sensor_closed }]
+        sequence:
+          # Optional: turn off entities on close
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ (close_turn_off_entities | length) > 0 }}"
+                sequence:
+                  - service: homeassistant.turn_off
+                    target: { entity_id: !input close_turn_off_entities }
+            default: []
+
+          # Speak CLOSED
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ do_tts_sensor }}"
+                sequence:
+                  - delay: { milliseconds: "{{ tts_preroll_ms | int }}" }
+                  - service: media_player.volume_set
+                    target: { entity_id: !input media_players }
+                    data: { volume_level: "{{ tts_volume_level }}" }
+                  - choose:
+                      - conditions: [{ condition: template, value_template: "{{ use_voice_option }}" }]
+                        sequence:
+                          - service: tts.speak
+                            target: { entity_id: !input tts_engine }
+                            data:
+                              message: "{{ final_closed }}"
+                              cache: !input tts_cache
+                              media_player_entity_id: !input media_players
+                              options: { voice: !input tts_voice }
+                    default:
+                      - service: tts.speak
+                        target: { entity_id: !input tts_engine }
+                        data:
+                          message: "{{ final_closed }}"
+                          cache: !input tts_cache
+                          media_player_entity_id: !input media_players
+            default: []
+
+          # Wait delay unless the door re-opens → then cancel
+          - wait_for_trigger:
+              - platform: state
+                entity_id: !input door_sensor
+                to: "on"
+            timeout: { seconds: !input lock_delay }
+            continue_on_timeout: true
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ wait.completed | default(false) }}"
+                sequence:
+                  - stop: "Door reopened during delay; cancel auto-lock."
+            default: []
+          - condition: template
+            value_template: "{{ states(sensor_ent) != 'on' }}"
+          - service: lock.lock
+            target: { entity_id: !input lock_entity }
+
+      # ---------- LOCK CHANGED (only locked/unlocked) ----------
+      - conditions: [{ condition: trigger, id: lock_changed }]
+        sequence:
+          # Optional: turn on entities on UNLOCK
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: >-
+                      {{ (unlock_turn_on_entities | length) > 0
+                         and trigger.to_state.state == 'unlocked' }}
+                sequence:
+                  - service: homeassistant.turn_on
+                    target: { entity_id: !input unlock_turn_on_entities }
+            default: []
+
+          # Speak LOCKED/UNLOCKED
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ do_tts_lock and trigger.to_state.state in ['locked','unlocked'] }}"
+                sequence:
+                  - delay: { milliseconds: 150 }
+                  - condition: template
+                    value_template: "{{ is_state(lock_ent, trigger.to_state.state) }}"
+                  - delay: { milliseconds: "{{ tts_preroll_ms | int }}" }
+                  - service: media_player.volume_set
+                    target: { entity_id: !input media_players }
+                    data: { volume_level: "{{ tts_volume_level }}" }
+                  - choose:
+                      - conditions: [{ condition: template, value_template: "{{ use_voice_option }}" }]
+                        sequence:
+                          - service: tts.speak
+                            target: { entity_id: !input tts_engine }
+                            data:
+                              message: >-
+                                {% if trigger.to_state.state == 'locked' %}
+                                  {{ final_locked }}
+                                {% else %}
+                                  {{ final_unlocked }}
+                                {% endif %}
+                              cache: !input tts_cache
+                              media_player_entity_id: !input media_players
+                              options: { voice: !input tts_voice }
+                    default:
+                      - service: tts.speak
+                        target: { entity_id: !input tts_engine }
+                        data:
+                          message: >-
+                            {% if trigger.to_state.state == 'locked' %}
+                              {{ final_locked }}
+                            {% else %}
+                              {{ final_unlocked }}
+                            {% endif %}
+                          cache: !input tts_cache
+                          media_player_entity_id: !input media_players
+            default: []
+
+          # Repeat reminder while UNLOCKED
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ do_tts_unlocked_reminder and trigger.to_state.state == 'unlocked' }}"
+                sequence:
+                  - repeat:
+                      while:
+                        - condition: template
+                          value_template: "{{ states(lock_ent) == 'unlocked' }}"
+                      sequence:
+                        - wait_for_trigger:
+                            - platform: state
+                              entity_id: !input lock_entity
+                              to: "locked"
+                          timeout: { seconds: !input reminder_interval }
+                          continue_on_timeout: true
+                        - condition: template
+                          value_template: "{{ states(lock_ent) == 'unlocked' }}"
+                        - delay: { milliseconds: "{{ tts_preroll_ms | int }}" }
+                        - service: media_player.volume_set
+                          target: { entity_id: !input media_players }
+                          data: { volume_level: "{{ tts_volume_level }}" }
+                        - choose:
+                            - conditions: [{ condition: template, value_template: "{{ use_voice_option }}" }]
+                              sequence:
+                                - service: tts.speak
+                                  target: { entity_id: !input tts_engine }
+                                  data:
+                                    message: "{{ final_unlocked_reminder }}"
+                                    cache: !input tts_cache
+                                    media_player_entity_id: !input media_players
+                                    options: { voice: !input tts_voice }
+                          default:
+                            - service: tts.speak
+                              target: { entity_id: !input tts_engine }
+                              data:
+                                message: "{{ final_unlocked_reminder }}"
+                                cache: !input tts_cache
+                                media_player_entity_id: !input media_players
+            default: []
