@@ -13,7 +13,7 @@ blueprint:
     • Optional reminders: repeats a message every X seconds while the door is OPEN
       and/or the lock is UNLOCKED, until it’s resolved (stops immediately when fixed).
     • Optional actions: turn on entities when the door opens; turn off entities when the door closes;
-      turn on entities when the lock UNLOCKS.
+      turn on/off entities when the lock UNLOCKS.
     • All speech is queued (mode: queued, max: 2) and a small TTS pre-roll prevents clipped words.
 
     Setup
@@ -75,28 +75,32 @@ blueprint:
     # ----- Announcements (mutually exclusive) -----
     announce_mode:
       name: Announcements
-      description: Choose what to announce (mutually exclusive).
+      description: |-
+        Choose **one** thing to announce:
+          • **none** – no speech  
+          • **sensor** – announce “<room> door was opened/closed” (based on your door sensor)  
+          • **lock** – announce “<room> door was locked/unlocked” (based on your lock)  
+        Requires a TTS engine and speakers. Only one can be active at a time.
       default: none
       selector:
         select:
           mode: dropdown
-          options:
-            - none
-            - sensor
-            - lock
+          options: [none, sensor, lock]
 
     # ----- Reminders (mutually exclusive) -----
     reminder_mode:
       name: Reminder mode
-      description: Choose which reminder loop to run (mutually exclusive).
+      description: |-
+        Choose **one** reminder loop to run, using the interval below:
+          • **none** – no reminders  
+          • **open** – repeat “<room> door is still open” while the sensor stays OPEN  
+          • **unlocked** – repeat “<room> door is still unlocked” while the lock stays UNLOCKED  
+        Reminders stop immediately when the condition clears.
       default: none
       selector:
         select:
           mode: dropdown
-          options:
-            - none
-            - open
-            - unlocked
+          options: [none, open, unlocked]
 
     reminder_interval:
       name: Reminder interval (seconds)
@@ -131,6 +135,15 @@ blueprint:
     unlock_turn_on_entities:
       name: Turn on when lock UNLOCKS (optional)
       description: Select lights/switches to turn on when the lock becomes UNLOCKED.
+      default: []
+      selector:
+        entity:
+          multiple: true
+          domain: [light, switch]
+
+    unlock_turn_off_entities:
+      name: Turn off when lock UNLOCKS (optional)
+      description: Select lights/switches to turn off when the lock becomes UNLOCKED.
       default: []
       selector:
         entity:
@@ -273,6 +286,7 @@ action:
       open_turn_on_entities: !input open_turn_on_entities
       close_turn_off_entities: !input close_turn_off_entities
       unlock_turn_on_entities: !input unlock_turn_on_entities
+      unlock_turn_off_entities: !input unlock_turn_off_entities
 
       reminder_interval: !input reminder_interval
 
@@ -444,6 +458,18 @@ action:
                 sequence:
                   - service: homeassistant.turn_on
                     target: { entity_id: !input unlock_turn_on_entities }
+            default: []
+
+          # Optional: turn off entities on UNLOCK
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: >-
+                      {{ (unlock_turn_off_entities | length) > 0
+                         and trigger.to_state.state == 'unlocked' }}
+                sequence:
+                  - service: homeassistant.turn_off
+                    target: { entity_id: !input unlock_turn_off_entities }
             default: []
 
           # Speak LOCKED/UNLOCKED
