@@ -1,16 +1,17 @@
 blueprint:
   name: "Aqara: Locks"
   description: |-
-    ![Aqara](https://raw.githubusercontent.com/zodyking/Aqara-Lock---Sensor-Blueprint/refs/heads/main/image1.png)
+    ![Aqara](https://raw.githubusercontent.com/zodyking/Locks-Contact-Sensors-Presence-Sensors-Blueprint-Pack/refs/heads/main/locks.png)
 
-    Locks-only automation with optional spoken announcements, an “still unlocked” reminder loop,
-    and optional actions on lock/unlock. Built for reliability and clear speech.
+    Locks-only automation with optional spoken announcements, a “still unlocked” reminder loop,
+    optional actions on lock/unlock, and time-based auto-lock. Built for reliability and clear speech.
 
     What it does
     • Speaks LOCKED/UNLOCKED (only after real, confirmed state changes).
     • Optional reminder: repeats a message every X seconds while the lock is UNLOCKED
       until it’s locked (stops immediately when fixed).
     • Optional actions: turn on entities when the lock UNLOCKS; turn off entities when the lock LOCKS.
+    • Time-based auto-lock: re-lock after X seconds whenever the lock becomes UNLOCKED.
     • All speech is queued (mode: queued, max: 2) with a small TTS pre-roll to prevent clipped words.
 
     Setup
@@ -105,6 +106,24 @@ blueprint:
         entity:
           multiple: true
           domain: [light, switch]
+
+    # ----- Time-based auto-lock -----
+    auto_lock_enabled:
+      name: Auto-lock after X seconds
+      description: If on, automatically lock after the delay whenever the lock becomes UNLOCKED (no sensor required).
+      default: false
+      selector: { boolean: {} }
+
+    auto_lock_delay:
+      name: Auto-lock delay (seconds)
+      description: How long after the lock becomes UNLOCKED to re-lock.
+      default: 30
+      selector:
+        number:
+          min: 1
+          max: 600
+          unit_of_measurement: seconds
+          mode: slider
 
     # ----- TTS plumbing -----
     tts_engine:
@@ -216,6 +235,10 @@ action:
       unlock_turn_on_entities: !input unlock_turn_on_entities
       lock_turn_off_entities: !input lock_turn_off_entities
 
+      # Auto-lock
+      auto_lock_enabled: !input auto_lock_enabled
+      auto_lock_delay: !input auto_lock_delay
+
       reminder_interval: !input reminder_interval
 
       # Messages
@@ -290,6 +313,31 @@ action:
                             {% endif %}
                           cache: !input tts_cache
                           media_player_entity_id: !input media_players
+            default: []
+
+          # ---- Time-based auto-lock (purely time-driven, no sensor) ----
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ auto_lock_enabled and trigger.to_state.state == 'unlocked' }}"
+                sequence:
+                  # Wait for lock action OR timeout → if still unlocked after timeout, lock it
+                  - wait_for_trigger:
+                      - platform: state
+                        entity_id: !input lock_entity
+                        to: "locked"
+                    timeout: { seconds: !input auto_lock_delay }
+                    continue_on_timeout: true
+                  - choose:
+                      - conditions:
+                          - condition: template
+                            value_template: "{{ wait.completed | default(false) }}"
+                        sequence: []
+                    default:
+                      - condition: template
+                        value_template: "{{ states(lock_ent) == 'unlocked' }}"
+                      - service: lock.lock
+                        target: { entity_id: !input lock_entity }
             default: []
 
           # Repeat reminder while UNLOCKED
