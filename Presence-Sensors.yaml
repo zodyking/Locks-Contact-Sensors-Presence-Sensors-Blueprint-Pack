@@ -154,6 +154,18 @@ blueprint:
           unit_of_measurement: ms
           mode: slider
 
+    # --- NEW: volume control for TTS ---
+    tts_volume:
+      name: TTS volume (%)
+      description: Volume level to set on all speakers right BEFORE every TTS message (0–100).
+      default: 60
+      selector:
+        number:
+          min: 0
+          max: 100
+          step: 1
+          unit_of_measurement: "%"
+
     notify_enabled:
       name: Send mobile notifications
       description: |-
@@ -207,6 +219,10 @@ action:
       tts_cache_val: !input tts_cache
       tts_voice_name: !input tts_voice
       tts_preroll_ms: !input tts_preroll_ms
+
+      # NEW: volume variables
+      tts_volume_percent: !input tts_volume
+      tts_volume_level: "{{ (tts_volume_percent | int) / 100 }}"
 
       notify_enabled: !input notify_enabled
       notify_devices: !input notify_devices
@@ -269,6 +285,11 @@ action:
                 sequence:
                   - delay:
                       milliseconds: "{{ tts_preroll_ms | int }}"
+                  - service: media_player.volume_set
+                    target:
+                      entity_id: !input media_players
+                    data:
+                      volume_level: "{{ tts_volume_level }}"
                   - choose:
                       - conditions:
                           - condition: template
@@ -355,6 +376,11 @@ action:
                 sequence:
                   - delay:
                       milliseconds: "{{ tts_preroll_ms | int }}"
+                  - service: media_player.volume_set
+                    target:
+                      entity_id: !input media_players
+                    data:
+                      volume_level: "{{ tts_volume_level }}"
                   - choose:
                       - conditions:
                           - condition: template
