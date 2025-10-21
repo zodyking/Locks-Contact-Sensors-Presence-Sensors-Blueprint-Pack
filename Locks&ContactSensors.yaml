@@ -13,7 +13,7 @@ blueprint:
     • Optional reminders: repeats a message every X seconds while the door is OPEN
       and/or the lock is UNLOCKED, until it’s resolved (stops immediately when fixed).
     • Optional actions: turn on entities when the door opens; turn off entities when the door closes;
-      turn on/off entities when the lock UNLOCKS.
+      turn on entities when the lock UNLOCKS; turn off entities when the lock LOCKS.
     • All speech is queued (mode: queued, max: 2) and a small TTS pre-roll prevents clipped words.
 
     Setup
@@ -76,11 +76,11 @@ blueprint:
     announce_mode:
       name: Announcements
       description: |-
-        Choose **one** thing to announce:
-          • **none** – no speech  
-          • **sensor** – announce “<room> door was opened/closed” (based on your door sensor)  
-          • **lock** – announce “<room> door was locked/unlocked” (based on your lock)  
-        Requires a TTS engine and speakers. Only one can be active at a time.
+        Choose exactly one (or none):
+          • none   → no announcements
+          • sensor → speak “<room> door was opened/closed”
+          • lock   → speak “<room> door was locked/unlocked”
+        (Requires TTS engine + media players below. Voice option is used only if your TTS supports it.)
       default: none
       selector:
         select:
@@ -91,11 +91,11 @@ blueprint:
     reminder_mode:
       name: Reminder mode
       description: |-
-        Choose **one** reminder loop to run, using the interval below:
-          • **none** – no reminders  
-          • **open** – repeat “<room> door is still open” while the sensor stays OPEN  
-          • **unlocked** – repeat “<room> door is still unlocked” while the lock stays UNLOCKED  
-        Reminders stop immediately when the condition clears.
+        Choose exactly one (or none):
+          • none     → no reminder loop
+          • open     → repeat “<room> door is still open” until door is closed
+          • unlocked → repeat “<room> door is still unlocked” until lock is locked
+        Uses the interval below; reminders stop immediately when the condition clears.
       default: none
       selector:
         select:
@@ -141,9 +141,9 @@ blueprint:
           multiple: true
           domain: [light, switch]
 
-    unlock_turn_off_entities:
-      name: Turn off when lock UNLOCKS (optional)
-      description: Select lights/switches to turn off when the lock becomes UNLOCKED.
+    lock_turn_off_entities:
+      name: Turn off when lock LOCKS (optional)
+      description: Select lights/switches to turn off when the lock becomes LOCKED.
       default: []
       selector:
         entity:
@@ -236,7 +236,6 @@ action:
 
       # Door type → nouning
       door_type_in: !input door_type
-
       subject_sensor: >-
         {% set r = room_for_sensor %}
         {% set t = (door_type_in or 'standard') %}
@@ -264,8 +263,6 @@ action:
       has_tts: >-
         {{ (players | length > 0)
            and (tts_engine_ent is string and (tts_engine_ent | length) > 0) }}
-
-      # Provider detection (safe)
       tts_provider: >-
         {% set s = (tts_engine_ent | string) %}
         {% set p = s.split('.') %}
@@ -274,7 +271,7 @@ action:
         {{ (tts_voice_name | default('') | trim) != ''
            and tts_provider in ['piper','edge_tts','amazon_polly','polly','google_cloud','elevenlabs'] }}
 
-      # Mutually-exclusive modes
+      # Modes
       announce_mode: !input announce_mode
       reminder_mode: !input reminder_mode
       do_tts_sensor: "{{ has_tts and announce_mode == 'sensor' }}"
@@ -286,7 +283,7 @@ action:
       open_turn_on_entities: !input open_turn_on_entities
       close_turn_off_entities: !input close_turn_off_entities
       unlock_turn_on_entities: !input unlock_turn_on_entities
-      unlock_turn_off_entities: !input unlock_turn_off_entities
+      lock_turn_off_entities: !input lock_turn_off_entities
 
       reminder_interval: !input reminder_interval
 
@@ -384,7 +381,7 @@ action:
                                 media_player_entity_id: !input media_players
             default: []
 
-      # ---------- SENSOR CLOSED (speak, then reliable auto-lock) ----------
+      # ---------- SENSOR CLOSED ----------
       - conditions: [{ condition: trigger, id: sensor_closed }]
         sequence:
           # Optional: turn off entities on close
@@ -426,7 +423,7 @@ action:
                           media_player_entity_id: !input media_players
             default: []
 
-          # Wait delay unless the door re-opens → then cancel
+          # Reliable auto-lock: wait delay unless door re-opens, then cancel
           - wait_for_trigger:
               - platform: state
                 entity_id: !input door_sensor
@@ -445,7 +442,7 @@ action:
           - service: lock.lock
             target: { entity_id: !input lock_entity }
 
-      # ---------- LOCK CHANGED (only locked/unlocked) ----------
+      # ---------- LOCK CHANGED ----------
       - conditions: [{ condition: trigger, id: lock_changed }]
         sequence:
           # Optional: turn on entities on UNLOCK
@@ -460,16 +457,16 @@ action:
                     target: { entity_id: !input unlock_turn_on_entities }
             default: []
 
-          # Optional: turn off entities on UNLOCK
+          # Optional: turn off entities on LOCK
           - choose:
               - conditions:
                   - condition: template
                     value_template: >-
-                      {{ (unlock_turn_off_entities | length) > 0
-                         and trigger.to_state.state == 'unlocked' }}
+                      {{ (lock_turn_off_entities | length) > 0
+                         and trigger.to_state.state == 'locked' }}
                 sequence:
                   - service: homeassistant.turn_off
-                    target: { entity_id: !input unlock_turn_off_entities }
+                    target: { entity_id: !input lock_turn_off_entities }
             default: []
 
           # Speak LOCKED/UNLOCKED
