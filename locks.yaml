@@ -1,0 +1,335 @@
+blueprint:
+  name: "Aqara: Locks"
+  description: |-
+    ![Aqara](https://raw.githubusercontent.com/zodyking/Aqara-Lock---Sensor-Blueprint/refs/heads/main/image1.png)
+
+    Locks-only automation with optional spoken announcements, an “still unlocked” reminder loop,
+    and optional actions on lock/unlock. Built for reliability and clear speech.
+
+    What it does
+    • Speaks LOCKED/UNLOCKED (only after real, confirmed state changes).
+    • Optional reminder: repeats a message every X seconds while the lock is UNLOCKED
+      until it’s locked (stops immediately when fixed).
+    • Optional actions: turn on entities when the lock UNLOCKS; turn off entities when the lock LOCKS.
+    • All speech is queued (mode: queued, max: 2) with a small TTS pre-roll to prevent clipped words.
+
+    Setup
+    1) Select the lock.
+    2) (Optional) Pick announcement mode (None or Lock).
+    3) (Optional) Pick reminder mode (None or Unlocked) and interval.
+    4) (Optional) Choose entities to turn on/off on unlock/lock.
+    5) (Optional) Choose a TTS engine (e.g., tts.piper), speakers, voice, pre-roll, and volume.
+
+    Notes
+    • The spoken “room” name comes from the lock entity’s Area (Settings → Areas).
+    • Announcements trigger only when the lock actually reports locked/unlocked (with a brief confirmation).
+    • Works with Aqara and other standard Home Assistant lock entities.
+
+  domain: automation
+
+  input:
+    lock_entity:
+      name: Smart lock
+      description: Pick the lock entity to announce/control (Aqara or any lock.*).
+      selector:
+        entity:
+          domain: lock
+
+    door_type:
+      name: Door type (affects default TTS wording)
+      description: |-
+        Controls how the default TTS refers to the opening (used with the Area name):
+          • Standard → “<room> door was <action>”
+          • Closet   → “<room> closet door was <action>”
+          • Entrance → “<room> entrance door was <action>”
+      default: standard
+      selector:
+        select:
+          mode: dropdown
+          options: [standard, closet, entrance]
+
+    # ----- Announcements (mutually exclusive) -----
+    announce_mode:
+      name: Announcements
+      description: |-
+        Choose exactly one (or none):
+          • none → no announcements
+          • lock → speak “<room> door was locked/unlocked”
+        (Requires TTS engine + media players below. Voice option is used only if your TTS supports it.)
+      default: none
+      selector:
+        select:
+          mode: dropdown
+          options: [none, lock]
+
+    # ----- Reminders (mutually exclusive) -----
+    reminder_mode:
+      name: Reminder mode
+      description: |-
+        Choose exactly one (or none):
+          • none     → no reminder loop
+          • unlocked → repeat “<room> door is still unlocked” until the lock is locked
+        Uses the interval below; reminders stop immediately when the condition clears.
+      default: none
+      selector:
+        select:
+          mode: dropdown
+          options: [none, unlocked]
+
+    reminder_interval:
+      name: Reminder interval (seconds)
+      description: How often to repeat reminder messages while the condition stays true.
+      default: 30
+      selector:
+        number:
+          min: 15
+          max: 120
+          unit_of_measurement: seconds
+          mode: slider
+
+    # ----- Optional actions on lock events -----
+    unlock_turn_on_entities:
+      name: Turn on when lock UNLOCKS (optional)
+      description: Select lights/switches to turn on when the lock becomes UNLOCKED.
+      default: []
+      selector:
+        entity:
+          multiple: true
+          domain: [light, switch]
+
+    lock_turn_off_entities:
+      name: Turn off when lock LOCKS (optional)
+      description: Select lights/switches to turn off when the lock becomes LOCKED.
+      default: []
+      selector:
+        entity:
+          multiple: true
+          domain: [light, switch]
+
+    # ----- TTS plumbing -----
+    tts_engine:
+      name: TTS engine
+      description: Pick your TTS engine entity (e.g., tts.piper). Required if announcements/reminders are enabled.
+      default: ""
+      selector:
+        entity:
+          domain: tts
+
+    media_players:
+      name: Speakers for TTS
+      description: One or more media_player entities to speak on.
+      default: []
+      selector:
+        entity:
+          domain: media_player
+          multiple: true
+
+    tts_cache:
+      name: Cache TTS audio
+      description: Let Home Assistant cache synthesized speech when supported.
+      default: false
+      selector: { boolean: {} }
+
+    tts_voice:
+      name: Voice name (optional)
+      description: Only used by engines that support an 'options.voice' parameter (Piper, Edge TTS, Amazon Polly, Google Cloud, ElevenLabs). Leave blank otherwise.
+      default: ""
+      selector: { text: {} }
+
+    tts_preroll_ms:
+      name: TTS pre-roll (milliseconds)
+      description: Short delay before speaking to avoid clipping the start of the message.
+      default: 150
+      selector:
+        number:
+          min: 0
+          max: 300
+          step: 10
+          unit_of_measurement: ms
+          mode: slider
+
+    tts_volume:
+      name: TTS volume (%)
+      description: Volume level to set on all speakers right BEFORE every TTS message (0–100).
+      default: 60
+      selector:
+        number:
+          min: 0
+          max: 100
+          step: 1
+          unit_of_measurement: "%"
+
+mode: queued
+max: 2
+
+trigger:
+  - id: lock_changed
+    platform: state
+    entity_id: !input lock_entity
+
+condition: []
+
+action:
+  - variables:
+      lock_ent: !input lock_entity
+
+      # Area → room label
+      lock_area: "{{ area_name(lock_ent) }}"
+      room_for_lock: "{{ lock_area or 'Door' }}"
+
+      # Door type → nouning for spoken phrase
+      door_type_in: !input door_type
+      subject_lock: >-
+        {% set r = room_for_lock %}
+        {% set t = (door_type_in or 'standard') %}
+        {% if t in ['closet','entrance'] %}
+          {{ r }} {{ t }} door
+        {% else %}
+          {{ r }} door
+        {% endif %}
+
+      # TTS & controls
+      players: !input media_players
+      tts_engine_ent: !input tts_engine
+      tts_voice_name: !input tts_voice
+      tts_preroll_ms: !input tts_preroll_ms
+      tts_volume_percent: !input tts_volume
+      tts_volume_level: "{{ (tts_volume_percent | int) / 100 }}"
+      has_tts: >-
+        {{ (players | length > 0)
+           and (tts_engine_ent is string and (tts_engine_ent | length) > 0) }}
+      tts_provider: >-
+        {% set s = (tts_engine_ent | string) %}
+        {% set p = s.split('.') %}
+        {{ p[1] if p|length > 1 else '' }}
+      use_voice_option: >-
+        {{ (tts_voice_name | default('') | trim) != ''
+           and tts_provider in ['piper','edge_tts','amazon_polly','polly','google_cloud','elevenlabs'] }}
+
+      # Modes
+      announce_mode: !input announce_mode
+      reminder_mode: !input reminder_mode
+      do_tts_lock: "{{ has_tts and announce_mode == 'lock' }}"
+      do_tts_unlocked_reminder: "{{ has_tts and reminder_mode == 'unlocked' }}"
+
+      # Optional action targets
+      unlock_turn_on_entities: !input unlock_turn_on_entities
+      lock_turn_off_entities: !input lock_turn_off_entities
+
+      reminder_interval: !input reminder_interval
+
+      # Messages
+      final_locked: "{{ subject_lock ~ ' was locked.' }}"
+      final_unlocked: "{{ subject_lock ~ ' was unlocked.' }}"
+      final_unlocked_reminder: "{{ subject_lock ~ ' is still unlocked.' }}"
+
+  - choose:
+      - conditions: [{ condition: trigger, id: lock_changed }]
+        sequence:
+          # Optional: turn on entities on UNLOCK
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: >-
+                      {{ (unlock_turn_on_entities | length) > 0
+                         and trigger.to_state.state == 'unlocked' }}
+                sequence:
+                  - service: homeassistant.turn_on
+                    target: { entity_id: !input unlock_turn_on_entities }
+            default: []
+
+          # Optional: turn off entities on LOCK
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: >-
+                      {{ (lock_turn_off_entities | length) > 0
+                         and trigger.to_state.state == 'locked' }}
+                sequence:
+                  - service: homeassistant.turn_off
+                    target: { entity_id: !input lock_turn_off_entities }
+            default: []
+
+          # Speak LOCKED/UNLOCKED (confirmed)
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ do_tts_lock and trigger.to_state.state in ['locked','unlocked'] }}"
+                sequence:
+                  - delay: { milliseconds: 150 }
+                  - condition: template
+                    value_template: "{{ is_state(lock_ent, trigger.to_state.state) }}"
+                  - delay: { milliseconds: "{{ tts_preroll_ms | int }}" }
+                  - service: media_player.volume_set
+                    target: { entity_id: !input media_players }
+                    data: { volume_level: "{{ tts_volume_level }}" }
+                  - choose:
+                      - conditions: [{ condition: template, value_template: "{{ use_voice_option }}" }]
+                        sequence:
+                          - service: tts.speak
+                            target: { entity_id: !input tts_engine }
+                            data:
+                              message: >-
+                                {% if trigger.to_state.state == 'locked' %}
+                                  {{ final_locked }}
+                                {% else %}
+                                  {{ final_unlocked }}
+                                {% endif %}
+                              cache: !input tts_cache
+                              media_player_entity_id: !input media_players
+                              options: { voice: !input tts_voice }
+                    default:
+                      - service: tts.speak
+                        target: { entity_id: !input tts_engine }
+                        data:
+                          message: >-
+                            {% if trigger.to_state.state == 'locked' %}
+                              {{ final_locked }}
+                            {% else %}
+                              {{ final_unlocked }}
+                            {% endif %}
+                          cache: !input tts_cache
+                          media_player_entity_id: !input media_players
+            default: []
+
+          # Repeat reminder while UNLOCKED
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ do_tts_unlocked_reminder and trigger.to_state.state == 'unlocked' }}"
+                sequence:
+                  - repeat:
+                      while:
+                        - condition: template
+                          value_template: "{{ states(lock_ent) == 'unlocked' }}"
+                      sequence:
+                        - wait_for_trigger:
+                            - platform: state
+                              entity_id: !input lock_entity
+                              to: "locked"
+                          timeout: { seconds: !input reminder_interval }
+                          continue_on_timeout: true
+                        - condition: template
+                          value_template: "{{ states(lock_ent) == 'unlocked' }}"
+                        - delay: { milliseconds: "{{ tts_preroll_ms | int }}" }
+                        - service: media_player.volume_set
+                          target: { entity_id: !input media_players }
+                          data: { volume_level: "{{ tts_volume_level }}" }
+                        - choose:
+                            - conditions: [{ condition: template, value_template: "{{ use_voice_option }}" }]
+                              sequence:
+                                - service: tts.speak
+                                  target: { entity_id: !input tts_engine }
+                                  data:
+                                    message: "{{ final_unlocked_reminder }}"
+                                    cache: !input tts_cache
+                                    media_player_entity_id: !input media_players
+                                    options: { voice: !input tts_voice }
+                          default:
+                            - service: tts.speak
+                              target: { entity_id: !input tts_engine }
+                              data:
+                                message: "{{ final_unlocked_reminder }}"
+                                cache: !input tts_cache
+                                media_player_entity_id: !input media_players
+            default: []
