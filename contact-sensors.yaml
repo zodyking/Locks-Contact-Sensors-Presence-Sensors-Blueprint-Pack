@@ -139,11 +139,36 @@ blueprint:
           unit_of_measurement: ms
           mode: slider
 
-    # ---- Optional action on OPEN ----
+    # --- NEW: TTS volume control ---
+    tts_volume:
+      name: TTS volume (%)
+      description: Volume level to set on all speakers right BEFORE every TTS message (0–100).
+      default: 60
+      selector:
+        number:
+          min: 0
+          max: 100
+          step: 1
+          unit_of_measurement: "%"
+
+    # ---- Optional actions on OPEN/CLOSE ----
     open_turn_on_entities:
       name: Turn on when sensor opens (optional)
       description: |-
         Select lights/switches to turn on immediately when the sensor opens. Leave empty to disable.
+      default: []
+      selector:
+        entity:
+          multiple: true
+          domain:
+            - light
+            - switch
+
+    # NEW: turn off on close
+    close_turn_off_entities:
+      name: Turn off when sensor closes (optional)
+      description: |-
+        Select lights/switches to turn off immediately when the sensor closes. Leave empty to disable.
       default: []
       selector:
         entity:
@@ -200,6 +225,7 @@ action:
       open_reminder_enabled: !input open_reminder_enabled
       reminder_interval: !input reminder_interval
       open_turn_on_entities: !input open_turn_on_entities
+      close_turn_off_entities: !input close_turn_off_entities
 
       # Can we speak at all? (independent of which feature is toggled)
       has_tts: >-
@@ -209,6 +235,10 @@ action:
       # Feature-specific gates
       can_tts_openclose: "{{ has_tts and announce_openclose }}"
       can_tts_reminder: "{{ has_tts and open_reminder_enabled }}"
+
+      # NEW: volume variables
+      tts_volume_percent: !input tts_volume
+      tts_volume_level: "{{ (tts_volume_percent | int) / 100 }}"
 
       # Messages (always non-empty strings)
       final_opened: "{{ (subject_sensor ~ ' was opened.') }}"
@@ -241,6 +271,11 @@ action:
                 sequence:
                   - delay:
                       milliseconds: "{{ tts_preroll_ms | int }}"
+                  - service: media_player.volume_set
+                    target:
+                      entity_id: !input media_players
+                    data:
+                      volume_level: "{{ tts_volume_level }}"
                   - choose:
                       - conditions:
                           - condition: template
@@ -288,6 +323,11 @@ action:
                           value_template: "{{ states(sensor_ent) == 'on' }}"
                         - delay:
                             milliseconds: "{{ tts_preroll_ms | int }}"
+                        - service: media_player.volume_set
+                          target:
+                            entity_id: !input media_players
+                          data:
+                            volume_level: "{{ tts_volume_level }}"
                         - choose:
                             - conditions:
                                 - condition: template
@@ -317,6 +357,18 @@ action:
           - condition: trigger
             id: sensor_closed
         sequence:
+          # NEW: turn off entities on close
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ (close_turn_off_entities | length) > 0 }}"
+                sequence:
+                  - service: homeassistant.turn_off
+                    target:
+                      entity_id: !input close_turn_off_entities
+            default: []
+
+          # Speak CLOSED
           - choose:
               - conditions:
                   - condition: template
@@ -324,6 +376,11 @@ action:
                 sequence:
                   - delay:
                       milliseconds: "{{ tts_preroll_ms | int }}"
+                  - service: media_player.volume_set
+                    target:
+                      entity_id: !input media_players
+                    data:
+                      volume_level: "{{ tts_volume_level }}"
                   - choose:
                       - conditions:
                           - condition: template
