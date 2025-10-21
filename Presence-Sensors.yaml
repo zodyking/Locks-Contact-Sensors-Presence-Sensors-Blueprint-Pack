@@ -154,7 +154,7 @@ blueprint:
           unit_of_measurement: ms
           mode: slider
 
-    # --- NEW: volume control for TTS ---
+    # --- TTS volume control ---
     tts_volume:
       name: TTS volume (%)
       description: Volume level to set on all speakers right BEFORE every TTS message (0–100).
@@ -220,7 +220,7 @@ action:
       tts_voice_name: !input tts_voice
       tts_preroll_ms: !input tts_preroll_ms
 
-      # NEW: volume variables
+      # volume vars
       tts_volume_percent: !input tts_volume
       tts_volume_level: "{{ (tts_volume_percent | int) / 100 }}"
 
@@ -328,11 +328,6 @@ action:
                         - service: "{{ 'notify.mobile_app_' ~ (device_attr(repeat.item, 'name') | string | lower | regex_replace('[^a-z0-9]+','_')) }}"
                           data:
                             message: "{{ msg_detected }}"
-                        - service: notify.notify
-                          data:
-                            message: "{{ msg_detected }}"
-                            target:
-                              - device_id: "{{ repeat.item }}"
 
       # -------- CLEARED --------
       - conditions:
@@ -419,8 +414,3 @@ action:
                         - service: "{{ 'notify.mobile_app_' ~ (device_attr(repeat.item, 'name') | string | lower | regex_replace('[^a-z0-9]+','_')) }}"
                           data:
                             message: "{{ msg_cleared }}"
-                        - service: notify.notify
-                          data:
-                            message: "{{ msg_cleared }}"
-                            target:
-                              - device_id: "{{ repeat.item }}"
